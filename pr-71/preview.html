@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>X-76 - model preview</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; display: grid; grid-template-rows: 1fr auto;
+      background: #0e1016; color: #dfe3ec; font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; }
+    #stage { position: relative; min-height: 0; }
+    #view { display: block; width: 100%; height: 100%; }
+    #hud { position: absolute; top: 10px; left: 12px; font: 12px ui-monospace, monospace;
+      color: #7fe8ff; text-shadow: 0 1px 2px #000; pointer-events: none; }
+    #caption { position: absolute; top: 10px; right: 12px; font: 12px ui-monospace, monospace;
+      color: #ffd070; text-shadow: 0 1px 2px #000; pointer-events: none; text-align: right; max-width: 40%; }
+    footer { border-top: 1px solid #222736; background: #12151d; padding: 8px 12px;
+      display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
+    fieldset { border: 1px solid #262c3b; border-radius: 6px; margin: 0; padding: 4px 9px 7px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    legend { font-size: 10px; color: #8b93a5; text-transform: uppercase; letter-spacing: .07em; padding: 0 4px; }
+    label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 12px; }
+    label span.v { color: #7fe8ff; font: 11px ui-monospace, monospace; min-width: 30px; text-align: right; }
+    input[type=range] { width: 90px; accent-color: #3fd8cb; }
+    select, button { background: #1a1f2b; color: #dfe3ec; border: 1px solid #2f3646;
+      border-radius: 5px; padding: 4px 8px; font: inherit; font-size: 12px; }
+    button { cursor: pointer; }
+    button:hover { border-color: #3fd8cb; }
+    button.on { border-color: #3fd8cb; background: #17303a; color: #9ff4ea; }
+    p.hint { margin: 0; color: #8b93a5; font-size: 11px; align-self: center; }
+    kbd { background: #1a1f2b; border: 1px solid #2f3646; border-radius: 3px; padding: 0 4px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud"></div>
+    <div id="caption"></div>
+  </div>
+  <footer>
+    <fieldset><legend>Sequence</legend>
+      <button data-demo="play">Fly it</button>
+      <button data-demo="idle" class="on">Idle</button>
+      <button data-demo="fire">Firing</button>
+      <button data-demo="beam">Charged beam</button>
+      <button data-demo="arrive">Pod flies in</button>
+      <button data-demo="dock">Pod docks front</button>
+      <button data-demo="dockback">Pod docks rear</button>
+      <button data-demo="shield">Shield hits</button>
+      <button id="replay">Replay</button>
+    </fieldset>
+    <fieldset><legend>Model</legend>
+      <select id="model"><option value="ship">Player ship</option><option value="pod">Pod</option></select>
+      <label>Pod <select id="podColor"><option>red</option><option>blue</option><option>yellow</option></select></label>
+    </fieldset>
+    <fieldset><legend>Animation</legend>
+      <label>Bank <input type="range" id="bank" min="-1" max="1" step="0.01" value="0"><span class="v" id="bankV">0.00</span></label>
+      <label><input type="checkbox" id="autoBank" checked> auto</label>
+      <label>Throttle <input type="range" id="throttle" min="0" max="1" step="0.01" value="1"><span class="v" id="throttleV">1.00</span></label>
+      <label><input type="checkbox" id="pause"> pause</label>
+    </fieldset>
+    <fieldset><legend>View</legend>
+      <button data-view="game">Game</button><button data-view="side">Side</button>
+      <button data-view="top">Top</button><button data-view="front">Front</button>
+      <button data-view="three">3/4</button><button data-view="rear">Rear</button>
+      <label><input type="checkbox" id="spin"> orbit</label>
+      <label>Zoom <input type="range" id="zoom" min="40" max="320" step="1" value="160"><span class="v" id="zoomV">160</span></label>
+    </fieldset>
+    <fieldset><legend>Render</legend>
+      <label><input type="checkbox" id="outline" checked> outlines</label>
+      <label><input type="checkbox" id="wire"> wireframe</label>
+      <label><input type="checkbox" id="grid" checked> grid</label>
+      <label>Light <input type="range" id="lightA" min="0" max="360" step="1" value="35"><span class="v" id="lightAV">35</span></label>
+      <label>BG <select id="bg"><option value="space">Space</option><option value="studio">Studio</option><option value="white">White</option></select></label>
+      <button id="shot">Save PNG</button>
+    </fieldset>
+    <p class="hint">Fly it: <kbd>arrows</kbd> move, <kbd>Z</kbd> fire (hold to charge), <kbd>X</kbd> pod.<br>Otherwise: drag to orbit, scroll to zoom, <kbd>R</kbd> reset view, <kbd>O</kbd> outlines, <kbd>1</kbd>/<kbd>2</kbd> model, <kbd>space</kbd> replay.</p>
+  </footer>
+  <script type="module" src="src/preview.js"></script>
+</body>
+</html>
