@@ -852,5 +852,6 @@ if (!r3d) {
   // ?smoke=1: run headlessly instead of on rAF, see tools/smoke.py. A
   // top-level await here holds the page's load event until it's done.
   if (smoke) (await import('./smoke.js')).runSmoke(game);
+  else if (new URLSearchParams(location.search).has('bench')) (await import('./bench.js')).runBench(game);
   else requestAnimationFrame(frame);
 }
