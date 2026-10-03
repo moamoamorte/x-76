@@ -2,7 +2,7 @@
 // Its eye is protected by an iris of armour petals that periodically open;
 // two armoured tentacles sweep the arena, and it spits homing larvae.
 import { TAU, rand, lerp, mulberry32 } from './util.js';
-import { Enemy, EBullet, Larva } from './enemies.js';
+import { Enemy, Larva } from './enemies.js';
 import { view, snap, scaledCanvas } from './view.js';
 
 const N_SEG = 16, SEG_LEN = 8;
@@ -166,9 +166,15 @@ export class Boss extends Enemy {
         tc.segs[i].y = y;
       }
     }
-    this.parts = this.state === 'fight'
-      ? [this.eye, ...this.bodyParts, ...this.tent[0].segs, ...this.tent[1].segs]
-      : [];
+    // Refilled in place rather than rebuilt, so it doesn't allocate every frame.
+    const parts = this.parts;
+    parts.length = 0;
+    if (this.state === 'fight') {
+      parts.push(this.eye);
+      for (const q of this.bodyParts) parts.push(q);
+      for (const q of this.tent[0].segs) parts.push(q);
+      for (const q of this.tent[1].segs) parts.push(q);
+    }
   }
 
   update() {
@@ -221,7 +227,7 @@ export class Boss extends Enemy {
         this.spiral += 0.45;
         for (let k = 0; k < 2; k++) {
           const a = this.spiral + k * Math.PI;
-          g.ebullets.push(new EBullet(this.x, EYE_Y, Math.cos(a) * 1.5, Math.sin(a) * 1.5));
+          g.enemyShot(this.x, EYE_Y, Math.cos(a) * 1.5, Math.sin(a) * 1.5);
         }
       }
     }

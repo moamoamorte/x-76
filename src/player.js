@@ -9,8 +9,21 @@ import {
 } from './tuning.js';
 
 // ---------------------------------------------------------------------------
+const TRAIL = 7;   // points kept in a laser's trail
+const POD_SHOTS = [[0], [0, -0.5, 0.5], [0, -0.5, 0.5, Math.PI - 0.5, Math.PI + 0.5]];   // angles by pod level
+const RICOCHET = [-0.45, 0, 0.45], RICOCHET_WIDE = [-0.5, -0.25, 0, 0.25, 0.5];
+
+// Pooled (see Game#shoot): init() resets every field any kind uses, so a
+// recycled bullet never inherits another kind's state. Callers set the
+// kind-specific ones after init.
 export class PBullet {
-  constructor(kind, x, y, vx, vy, o = {}) {
+  constructor() {
+    this.trailX = new Float64Array(TRAIL);
+    this.trailY = new Float64Array(TRAIL);
+    this.hitSet = new Set();
+  }
+
+  init(kind, x, y, vx, vy) {
     this.kind = kind;
     this.x = x;
     this.y = y;
@@ -20,8 +33,17 @@ export class PBullet {
     this.dmg = 1;
     this.t = 0;
     this.dead = false;
-    this.trail = [];
-    Object.assign(this, o);
+    // The lasers that draw as a streak keep the last few positions.
+    this.trail = kind === 'helix' || kind === 'ricochet' || kind === 'crawler';
+    this.trailLen = 0;
+    this.color = null;
+    this.y0 = 0; this.phase = 0; this.amp = 0;               // helix
+    this.bounces = 0;                                        // ricochet
+    this.dir = 1; this.surf = 0; this.mode = null;           // crawler
+    this.a = 0; this.sp = 0; this.target = null;             // missile
+    this.hw = 0; this.hh = 0; this.power = 0; this.level = 0; // beam
+    this.hitSet.clear();
+    return this;
   }
 
   die(g, spark = true) {
@@ -33,7 +55,7 @@ export class PBullet {
     const T = g.terrain;
     this.t++;
     this.x += g.scrollDelta;
-    if (this.trail) for (const q of this.trail) q.x += g.scrollDelta;
+    if (this.trail) for (let i = 0; i < this.trailLen; i++) this.trailX[i] += g.scrollDelta;
 
     switch (this.kind) {
       case 'shot':
@@ -105,15 +127,21 @@ export class PBullet {
         this.vy = Math.sin(this.a) * this.sp;
         this.x += this.vx;
         this.y += this.vy;
-        if (this.t % 3 === 0) g.fx.add({ k: 'smoke', x: this.x, y: this.y, vx: 0, vy: 0, r: 2, life: 16, max: 16 });
+        if (this.t % 3 === 0) g.fx.emit('smoke', this.x, this.y, 0, 0, 2, 16, 16);
         if (T.solidAt(this.x, this.y)) this.die(g);
         break;
       }
     }
 
     if (this.trail) {
-      this.trail.push({ x: this.x, y: this.y });
-      if (this.trail.length > 7) this.trail.shift();
+      if (this.trailLen === TRAIL) {
+        this.trailX.copyWithin(0, 1);
+        this.trailY.copyWithin(0, 1);
+        this.trailLen--;
+      }
+      this.trailX[this.trailLen] = this.x;
+      this.trailY[this.trailLen] = this.y;
+      this.trailLen++;
     }
 
     const sx = this.x - g.cam;
@@ -177,11 +205,11 @@ export class PBullet {
   }
 
   strokeTrail(ctx, cam, alpha) {
-    if (this.trail.length < 2) return;
+    if (this.trailLen < 2) return;
     ctx.globalAlpha = alpha;
     ctx.beginPath();
-    ctx.moveTo(this.trail[0].x - cam, this.trail[0].y);
-    for (let i = 1; i < this.trail.length; i++) ctx.lineTo(this.trail[i].x - cam, this.trail[i].y);
+    ctx.moveTo(this.trailX[0] - cam, this.trailY[0]);
+    for (let i = 1; i < this.trailLen; i++) ctx.lineTo(this.trailX[i] - cam, this.trailY[i]);
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
@@ -309,9 +337,10 @@ export class Player {
 
   fire() {
     const g = this.g;
-    const shots = g.pbullets.reduce((n, b) => n + (b.kind === 'shot'), 0);
+    let shots = 0;
+    for (const b of g.pbullets) if (b.kind === 'shot') shots++;
     if (shots < 6) {
-      g.pbullets.push(new PBullet('shot', this.x + 18, this.y, 8, 0, { trail: null }));
+      g.shoot('shot', this.x + 18, this.y, 8, 0);
       g.audio.play('shot');
       g.r3d.ship.fire(1);
     }
@@ -319,8 +348,10 @@ export class Player {
     for (const b of g.bits) b.fire();
     if (this.missile && this.missileCd <= 0) {
       this.missileCd = 50;
-      for (const s of [-1, 1])
-        g.pbullets.push(new PBullet('missile', this.x, this.y + s * 4, 0, 0, { a: s * 1.1, sp: 1.2, dmg: 3, trail: null }));
+      for (let s = -1; s <= 1; s += 2) {
+        const m = g.shoot('missile', this.x, this.y + s * 4, 0, 0);
+        m.a = s * 1.1; m.sp = 1.2; m.dmg = 3;
+      }
       g.audio.play('missile');
     }
   }
@@ -328,10 +359,10 @@ export class Player {
   fireBeam() {
     const g = this.g;
     const L = beamLevel(this.charge);
-    g.pbullets.push(new PBullet('beam', this.x + 16 + BEAM.hw[L], this.y, 8.5, 0, {
-      hw: BEAM.hw[L], hh: BEAM.hh[L], power: BEAM.power[L], level: L, hitSet: new Set(), trail: null,
-    }));
-    g.fx.add({ k: 'ring', x: this.x + 20, y: this.y, r: 2, vr: 1.5 + L * 0.4, life: 12, max: 12, c: '#aee6ff' });
+    const b = g.shoot('beam', this.x + 16 + BEAM.hw[L], this.y, 8.5, 0);
+    b.hw = BEAM.hw[L]; b.hh = BEAM.hh[L]; b.power = BEAM.power[L]; b.level = L;
+    const ring = g.fx.emit('ring', this.x + 20, this.y, 0, 0, 2, 12, 12, '#aee6ff');
+    if (ring) ring.vr = 1.5 + L * 0.4;
     g.audio.play('beam', L);
     g.r3d.ship.fire(1 + L * 0.4);
   }
@@ -456,32 +487,40 @@ export class Pod {
       this.fireLaser();
       return;
     }
-    const dirs = [[0], [0, -0.5, 0.5], [0, -0.5, 0.5, Math.PI - 0.5, Math.PI + 0.5]][this.level - 1];
-    for (const a of dirs)
-      g.pbullets.push(new PBullet('podshot', this.x, this.y, Math.cos(a) * 6, Math.sin(a) * 6, { trail: null }));
+    for (const a of POD_SHOTS[this.level - 1]) g.shoot('podshot', this.x, this.y, Math.cos(a) * 6, Math.sin(a) * 6);
   }
 
   fireLaser() {
     const g = this.g, L = this.level, color = this.color;
     const dir = this.state === 'front' ? 1 : -1;
     const x = this.x + dir * 8, y = this.y;
-    const push = (kind, vx, vy, o) => g.pbullets.push(new PBullet(kind, x, y, vx, vy, { color, ...o }));
+    const shot = (kind, vx, vy) => {
+      const b = g.shoot(kind, x, y, vx, vy);
+      b.color = color;
+      return b;
+    };
     switch (color) {
       case 'red':
-        for (const phase of [0, Math.PI])
-          push('helix', 7 * dir, 0, { y0: y, phase, amp: 5 + L * 2.5, r: 2.5 + L * 0.5, dmg: 1 + L * 0.6 });
+        for (let i = 0; i < 2; i++) {
+          const b = shot('helix', 7 * dir, 0);
+          b.y0 = y; b.phase = i * Math.PI; b.amp = 5 + L * 2.5; b.r = 2.5 + L * 0.5; b.dmg = 1 + L * 0.6;
+        }
         break;
-      case 'blue': {
-        const angles = L >= 3 ? [-0.5, -0.25, 0, 0.25, 0.5] : [-0.45, 0, 0.45];
-        for (const a of angles)
-          push('ricochet', Math.cos(a) * 6.5 * dir, Math.sin(a) * 6.5, { bounces: 1 + L, dmg: 0.8 + L * 0.5, r: 2.5 });
+      case 'blue':
+        for (const a of L >= 3 ? RICOCHET_WIDE : RICOCHET) {
+          const b = shot('ricochet', Math.cos(a) * 6.5 * dir, Math.sin(a) * 6.5);
+          b.bounces = 1 + L; b.dmg = 0.8 + L * 0.5; b.r = 2.5;
+        }
+        break;
+      case 'yellow': {
+        for (let s = -1; s <= 1; s += 2) {
+          const b = shot('crawler', 0, s * 5);
+          b.dir = dir; b.surf = s; b.mode = 'vert'; b.dmg = 1.5 + L * 0.6; b.r = 2.5 + L * 0.5;
+        }
+        const b = shot('yshot', 7 * dir, 0);
+        b.dmg = 1 + L * 0.5; b.r = 2.5 + L * 0.4;
         break;
       }
-      case 'yellow':
-        for (const s of [-1, 1])
-          push('crawler', 0, s * 5, { dir, surf: s, mode: 'vert', dmg: 1.5 + L * 0.6, r: 2.5 + L * 0.5 });
-        push('yshot', 7 * dir, 0, { dmg: 1 + L * 0.5, r: 2.5 + L * 0.4, trail: null });
-        break;
     }
     g.audio.play('laser');
   }
@@ -505,7 +544,7 @@ export class Bit {
     this.y = lerp(this.y, p.y + this.slot * 20, 0.3);
   }
   fire() {
-    this.g.pbullets.push(new PBullet('bitshot', this.x + 6, this.y, 7, 0, { trail: null }));
+    this.g.shoot('bitshot', this.x + 6, this.y, 7, 0);
   }
   draw(ctx, cam) {
     const x = snap(this.x) - cam, y = snap(this.y);

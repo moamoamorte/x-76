@@ -1,35 +1,69 @@
 // Particle effects: explosions, sparks, smoke, shockwave rings.
 import { rand, TAU } from './util.js';
+import { Pool, compact } from './pool.js';
 
 const FIRE = ['#fff8d0', '#ffe070', '#ffb030', '#ff6a1a', '#c8321a', '#5a1d14'];
+const MAX = 900;
+
+// One shape for every kind, so V8 keeps a single hidden class for them all.
+class Particle {
+  init(k, x, y, vx, vy, r, life, max, c) {
+    this.k = k;
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.r = r;
+    this.vr = 0;
+    this.life = life;
+    this.max = max;
+    this.c = c;
+    this.tx = 0;
+    this.ty = 0;
+    return this;
+  }
+}
+const alive = (o) => o.life > 0;
 
 export class FX {
   constructor() {
     this.p = [];
+    this.pool = new Pool(() => new Particle());
+    this.release = (o) => this.pool.release(o);
+    this.reset();
+  }
+
+  reset() {
+    for (const o of this.p) this.pool.release(o);
+    this.p.length = 0;
     this.shake = 0;
     this.flash = 0;
   }
 
-  add(o) {
-    if (this.p.length < 900) this.p.push(o);
+  // Returns the particle, or null once the cap is reached (it's dropped).
+  emit(k, x, y, vx, vy, r, life, max, c = null) {
+    if (this.p.length >= MAX) return null;
+    const o = this.pool.acquire().init(k, x, y, vx, vy, r, life, max, c);
+    this.p.push(o);
+    return o;
   }
 
   explode(x, y, size = 1) {
     const n = Math.round(6 * size + 4);
-    this.add({ k: 'ring', x, y, r: 2, vr: 1.6 + size * 0.8, life: 14 + size * 4, max: 14 + size * 4, c: '#ffe9a8' });
+    const ring = this.emit('ring', x, y, 0, 0, 2, 14 + size * 4, 14 + size * 4, '#ffe9a8');
+    if (ring) ring.vr = 1.6 + size * 0.8;
     for (let i = 0; i < n; i++) {
       const a = rand(0, TAU), s = rand(0.3, 1.6) * (0.8 + size * 0.4);
       const life = rand(18, 34) * (0.8 + size * 0.25);
-      this.add({ k: 'fire', x: x + rand(-4, 4) * size, y: y + rand(-4, 4) * size, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
-        r: rand(3, 6) * (0.7 + size * 0.35), life, max: life });
+      this.emit('fire', x + rand(-4, 4) * size, y + rand(-4, 4) * size, Math.cos(a) * s, Math.sin(a) * s,
+        rand(3, 6) * (0.7 + size * 0.35), life, life);
     }
     for (let i = 0; i < n * 1.5; i++) {
       const a = rand(0, TAU), s = rand(1.5, 4.5) * (0.8 + size * 0.2);
-      this.add({ k: 'spark', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(10, 26), max: 26, c: '#ffd27a' });
+      this.emit('spark', x, y, Math.cos(a) * s, Math.sin(a) * s, 0, rand(10, 26), 26, '#ffd27a');
     }
     for (let i = 0; i < size * 2; i++) {
-      this.add({ k: 'smoke', x: x + rand(-6, 6), y: y + rand(-6, 6), vx: rand(-0.3, 0.3), vy: rand(-0.5, 0), r: rand(4, 8) * size,
-        life: 50, max: 50 });
+      this.emit('smoke', x + rand(-6, 6), y + rand(-6, 6), rand(-0.3, 0.3), rand(-0.5, 0), rand(4, 8) * size, 50, 50);
     }
     this.shake = Math.max(this.shake, size * 2.2);
   }
@@ -37,14 +71,15 @@ export class FX {
   sparks(x, y, color = '#9fe8ff', n = 5, speed = 2.5) {
     for (let i = 0; i < n; i++) {
       const a = rand(0, TAU), s = rand(0.5, 1) * speed;
-      this.add({ k: 'spark', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(6, 14), max: 14, c: color });
+      this.emit('spark', x, y, Math.cos(a) * s, Math.sin(a) * s, 0, rand(6, 14), 14, color);
     }
   }
 
   // Energy particles that fly into a point (used while charging the beam).
   suck(x, y, color) {
     const a = rand(0, TAU), d = rand(14, 26);
-    this.add({ k: 'suck', x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, tx: x, ty: y, life: 12, max: 12, c: color });
+    const o = this.emit('suck', x + Math.cos(a) * d, y + Math.sin(a) * d, 0, 0, 0, 12, 12, color);
+    if (o) { o.tx = x; o.ty = y; }
   }
 
   update(scrollDelta) {
@@ -73,7 +108,7 @@ export class FX {
         }
       }
     }
-    this.p = this.p.filter((o) => o.life > 0);
+    compact(this.p, alive, this.release);
     this.shake *= 0.88;
     if (this.shake < 0.2) this.shake = 0;
     if (this.flash > 0) this.flash--;
