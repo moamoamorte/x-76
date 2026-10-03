@@ -29,6 +29,9 @@ src/            game + harness modules
 | `src/font.js` | 125 | Angular stroke font on a 5x7 grid, with a render cache |
 | `src/input.js` | 83 | Keyboard + gamepad, edge detection |
 | `src/util.js` | 48 | Constants and maths helpers |
+| `src/pool.js` | 39 | Object pools and in-place, order-keeping list compaction |
+| `src/smoke.js` | 105 | `?smoke=1`: scripted headless run for `tools/smoke.py` |
+| `src/bench.js` | 79 | `?bench=1`: allocation benchmark for `tools/bench.py` |
 | `src/view.js` | 30 | Display scale (logical → device pixels), `snap()`, scaled offscreen canvases |
 | `src/render3d.js` | 249 | 3D layer: perspective camera; draws terrain, then ship, pod and shield |
 | `src/models/ship.js` | 177 | Procedural ship model |
@@ -44,6 +47,8 @@ src/            game + harness modules
 ## Game loop
 
 `main.js` runs a fixed 60 Hz accumulator: `update()` may run several times per animation frame, `draw()` once. A thrown error is caught, logged and the loop continues, so one bad frame cannot freeze the game.
+
+**Allocation.** Bullets and particles are pooled (`pool.js`): `game.shoot()`, `game.enemyShot()` and `fx.emit()` take a recycled object and reset it through `init()`, and every list is compacted in place at the end of a step, handing the dead back to their pools while keeping order. `PBullet.init()` resets every field any kind uses, so a recycled bullet can't inherit another kind's state; kind-specific values are set after it. Particles are one class with one field layout. `game.poolStats()` reports high-water marks, which plateau within a few minutes of play. The 3D layer builds its objects up front (models at start-up, terrain and backdrops per stage) and creates none per frame; `tools/smoke.py` fails if its scene graph changes size during play. `python3 tools/bench.py` measures heap allocation per frame (simulation and drawing apart) and GC count; compare runs interleaved, because its absolute numbers drift between sessions.
 
 States: `title` → `play` → (`gameover` | `clear`) → `title`. From `clear` the game moves on to the next entry in `STAGES` if there is one, carrying score, lives and power-ups. Pause is a flag inside `play`. The tab losing visibility auto-pauses.
 

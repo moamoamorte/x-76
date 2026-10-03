@@ -6,13 +6,14 @@ import { drawText } from './font.js';
 import { FX } from './fx.js';
 import { Background } from './background.js';
 import { STAGES } from './stages.js';
-import { Player, Pod, Bit } from './player.js';
+import { Player, Pod, Bit, PBullet } from './player.js';
 import { createEnemy, EBullet } from './enemies.js';
 import { PowerItem, CRYSTAL_COLORS } from './items.js';
 import { Render3D } from './render3d.js';
 import { TouchControls, toggleFullscreen } from './touch.js';
 import { SHIELD_DAMAGE, SHIELD_INV, SHIELD_PICKUP } from './tuning.js';
 import { view, snap, setViewScale, MAX_SCALE } from './view.js';
+import { Pool, compact } from './pool.js';
 
 // Three stacked canvases (index.html), back to front: the background, the
 // WebGL layer (terrain, ship, pod), then sprites, HUD and overlays. `ctx` is
@@ -39,6 +40,11 @@ function saveHi(v) {
   try { localStorage.setItem(HI_KEY, String(v)); } catch { /* storage unavailable */ }
 }
 const pad = (n, l = 7) => String(Math.floor(n)).padStart(l, '0');
+// Module-level so the per-step compaction doesn't allocate closures.
+const live = (o) => !o.dead;
+const showing = (p) => p.t > 0;
+const hitTest = (b, part) =>
+  b.hw ? rectCircleHit(b.x, b.y, b.hw, b.hh, part.x, part.y, part.r) : circleHit(b.x, b.y, b.r, part.x, part.y, part.r);
 
 // ---- HUD drawing helpers ----------------------------------------------------
 // Thinnest line that still covers a whole device pixel.
@@ -68,6 +74,10 @@ class Game {
     this.setStage(0);
     this.bg = new Background();
     this.fx = new FX();
+    // Bullets are recycled rather than allocated per shot; see pool.js.
+    this.pools = { pbullet: new Pool(() => new PBullet()), ebullet: new Pool(() => new EBullet()) };
+    this.releasePB = (b) => this.pools.pbullet.release(b);
+    this.releaseEB = (b) => this.pools.ebullet.release(b);
     this.touch = new TouchControls(this);
     this.hi = loadHi();
     this.state = 'title';
@@ -84,12 +94,16 @@ class Game {
     });
   }
 
+  // Live bullets go back to their pools; the arrays themselves are reused.
   resetLists() {
-    this.enemies = [];
-    this.pbullets = [];
-    this.ebullets = [];
-    this.items = [];
-    this.popups = [];
+    if (this.pbullets) {
+      for (const b of this.pbullets) this.releasePB(b);
+      for (const b of this.ebullets) this.releaseEB(b);
+    }
+    for (const k of ['enemies', 'pbullets', 'ebullets', 'items', 'popups']) {
+      if (this[k]) this[k].length = 0;
+      else this[k] = [];
+    }
     this.bits = [];
     this.pod = null;
     this.boss = null;
@@ -139,7 +153,7 @@ class Game {
 
   startAt(cam, first = false) {
     this.resetLists();
-    this.fx = new FX();
+    this.fx.reset();
     this.cam = cam;
     this.scrollDelta = 0;
     this.deathT = 0;
@@ -293,10 +307,27 @@ class Game {
     this.items.push(new PowerItem(this, x, y, type));
   }
 
+  // Every bullet comes from these two, out of the pools.
+  shoot(kind, x, y, vx, vy) {
+    const b = this.pools.pbullet.acquire().init(kind, x, y, vx, vy);
+    this.pbullets.push(b);
+    return b;
+  }
+
+  enemyShot(x, y, vx, vy, big = false) {
+    const b = this.pools.ebullet.acquire().init(x, y, vx, vy, big);
+    this.ebullets.push(b);
+    return b;
+  }
+
+  poolStats() {
+    return { pbullet: this.pools.pbullet.stats(), ebullet: this.pools.ebullet.stats(), particle: this.fx.pool.stats() };
+  }
+
   aimed(x, y, sp, off = 0, big = false) {
     const p = this.player;
     const a = angleTo(x, y, p.x, p.y) + off;
-    this.ebullets.push(new EBullet(x, y, Math.cos(a) * sp, Math.sin(a) * sp, big));
+    this.enemyShot(x, y, Math.cos(a) * sp, Math.sin(a) * sp, big);
     this.audio.play('eshot');
   }
 
@@ -418,11 +449,11 @@ class Game {
     this.fx.update(this.scrollDelta);
     for (const pu of this.popups) { pu.t--; pu.y -= 0.4; pu.x += this.scrollDelta; }
 
-    this.pbullets = this.pbullets.filter((b) => !b.dead);
-    this.ebullets = this.ebullets.filter((b) => !b.dead);
-    this.enemies = this.enemies.filter((e) => !e.dead);
-    this.items = this.items.filter((i) => !i.dead);
-    this.popups = this.popups.filter((p) => p.t > 0);
+    compact(this.pbullets, live, this.releasePB);
+    compact(this.ebullets, live, this.releaseEB);
+    compact(this.enemies, live);
+    compact(this.items, live);
+    compact(this.popups, showing);
     if (this.boss?.dead) this.boss = null;
 
     if (this.banner && --this.banner.t <= 0) this.banner = null;
@@ -444,15 +475,13 @@ class Game {
 
   collide() {
     const p = this.player;
-    const hitTest = (b, part) =>
-      b.hw ? rectCircleHit(b.x, b.y, b.hw, b.hh, part.x, part.y, part.r) : circleHit(b.x, b.y, b.r, part.x, part.y, part.r);
 
     // Player projectiles vs enemies
     for (const b of this.pbullets) {
       if (b.dead) continue;
       for (const e of this.enemies) {
         if (e.dead || !e.active) continue;
-        const parts = e.parts || [e];
+        const parts = e.parts || e.solo;
         for (const part of parts) {
           if (!hitTest(b, part)) continue;
           this.bulletHit(b, e, part);
@@ -463,26 +492,8 @@ class Game {
     }
 
     // Pod and bits: ram enemies, soak bullets
-    const shields = [];
-    if (this.pod && this.pod.state !== 'arrive') shields.push([this.pod, 0.34]);
-    for (const bit of this.bits) shields.push([bit, 0.2]);
-    for (const [s, dmg] of shields) {
-      for (const e of this.enemies) {
-        if (e.dead || !e.active) continue;
-        for (const part of e.parts || [e]) {
-          if (part.armored || !circleHit(s.x, s.y, s.r, part.x, part.y, part.r)) continue;
-          e.hit(dmg, part);
-          if (this.t % 6 === 0) this.fx.sparks(s.x, s.y, '#ffd080', 2, 2);
-          break;
-        }
-      }
-      for (const b of this.ebullets) {
-        if (!b.dead && circleHit(s.x, s.y, s.r, b.x, b.y, b.r)) {
-          b.dead = true;
-          this.fx.sparks(b.x, b.y, '#ffb070', 2, 1.5);
-        }
-      }
-    }
+    if (this.pod && this.pod.state !== 'arrive') this.shieldHits(this.pod, 0.34);
+    for (const bit of this.bits) this.shieldHits(bit, 0.2);
 
     if (p.dead || p.entering) return;
 
@@ -504,11 +515,29 @@ class Game {
     }
     for (const e of this.enemies) {
       if (e.dead || (!e.active && e !== this.boss)) continue;
-      for (const part of e.parts || [e]) {
+      for (const part of e.parts || e.solo) {
         if (circleHit(p.hx, p.hy, 4, part.x, part.y, part.r * 0.85)) {
           this.hitPlayer(e === this.boss ? 'boss' : 'enemy', angleTo(p.hx, p.hy, part.x, part.y));
           return;
         }
+      }
+    }
+  }
+
+  shieldHits(s, dmg) {
+    for (const e of this.enemies) {
+      if (e.dead || !e.active) continue;
+      for (const part of e.parts || e.solo) {
+        if (part.armored || !circleHit(s.x, s.y, s.r, part.x, part.y, part.r)) continue;
+        e.hit(dmg, part);
+        if (this.t % 6 === 0) this.fx.sparks(s.x, s.y, '#ffd080', 2, 2);
+        break;
+      }
+    }
+    for (const b of this.ebullets) {
+      if (!b.dead && circleHit(s.x, s.y, s.r, b.x, b.y, b.r)) {
+        b.dead = true;
+        this.fx.sparks(b.x, b.y, '#ffb070', 2, 1.5);
       }
     }
   }
@@ -852,5 +881,6 @@ if (!r3d) {
   // ?smoke=1: run headlessly instead of on rAF, see tools/smoke.py. A
   // top-level await here holds the page's load event until it's done.
   if (smoke) (await import('./smoke.js')).runSmoke(game);
+  else if (new URLSearchParams(location.search).has('bench')) (await import('./bench.js')).runBench(game);
   else requestAnimationFrame(frame);
 }
