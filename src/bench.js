@@ -30,17 +30,21 @@ export function runBench(game) {
       frames++;
     }
   };
-  // Fire in bursts, charging a beam every few seconds and cycling the pod.
+  // Each second: tap fire every 4 frames (a press fires; holding charges),
+  // except every fourth second, which holds to charge and release a beam.
+  // The pod is launched and recalled now and then; the ship weaves.
   const play = (n) => {
     for (let t = 0; t < n; t += 60) {
-      hold('fire', (t / 60) % 4 !== 3);
-      if ((t / 60) % 4 === 2) { hold('pod', true); step(1); hold('pod', false); }
-      hold(t % 240 < 120 ? 'up' : 'down', true);
-      step(30);
+      const sec = t / 60;
+      if (sec % 8 === 2 || sec % 8 === 4) { hold('pod', true); step(1); hold('pod', false); }
+      hold(sec % 4 < 2 ? 'up' : 'down', true);
+      if (sec % 4 === 3) {
+        hold('fire', true); step(56); hold('fire', false); step(4);
+      } else {
+        for (let i = 0; i < 15; i++) { hold('fire', true); step(2); hold('fire', false); step(2); }
+      }
       hold('up', false); hold('down', false);
-      step(30);
     }
-    hold('fire', false);
   };
 
   game.warp({ cp: 3, god: true, power: 'pod:blue:3,speed:2,missile,bits:2' });

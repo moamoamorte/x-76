@@ -42,7 +42,9 @@ ES modules need HTTP; opening `index.html` from disk will not work. `serve.py` a
 
 ## Testing
 
-`python3 tools/smoke.py` is a headless smoke test: it boots the game at every checkpoint plus the boss, fakes input for a few hundred frames at each, and fails on any console error or exception, or if WebGL can't start. Run it after changes that touch the game loop, spawning or collision. It needs a Chromium/Chrome binary already on the machine (set `CHROME=/path/to/binary` if it can't find one) — no dependencies to install.
+`python3 tools/smoke.py` is a headless smoke test: it boots the game at every checkpoint plus the boss, fakes input for a few hundred frames at each, and fails on any console error or exception, or if WebGL can't start. Run it after changes that touch the game loop, spawning or collision. It needs a Chromium/Chrome binary already on the machine (set `CHROME=/path/to/binary` if it can't find one) — no dependencies to install. It also fails if the 3D layer's scene graph grows during play.
+
+`python3 tools/bench.py` measures how much the game allocates per frame (simulation and drawing separately) and how many garbage collections that causes, over a fixed busy stretch. Use it before and after changes to pooling or hot loops, and compare runs interleaved with a baseline checkout: the absolute numbers drift between sessions.
 
 Beyond that there is no automated test suite. Verify in the browser:
 

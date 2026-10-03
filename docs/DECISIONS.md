@@ -167,3 +167,11 @@ Why things are the way they are. Newest last. If one of these looks wrong, check
 - *Two passes:* the ship's model is wider than its hitbox, so it often overlaps a wall it's grazing without touching it. In one depth-tested pass the wall's front face (z = 0) would cut off the half of the ship behind z = 0.
 
 **Consequence:** front-layer sprites (enemy bullets, explosions, items) now draw over the 3D ship rather than under it, and overlays dim the ship too. The station and chamber walls followed in [#67](https://github.com/moamoamorte/x-76/issues/67): they're geometry set back to z −110…−230, so the camera's perspective gives them parallax (old 2D factor 0.5, now 0.74–0.85 by depth, with layers within a wall sliding against each other). Only the starfield and nebula, effectively at infinity, stay on the back canvas. When enemies convert (#7), each one moves from the front canvas into the 3D scene, and the layer table in ARCHITECTURE.md should follow.
+
+## 23. Pool bullets and particles; the 3D layer creates nothing per frame
+
+**Decision:** player bullets, enemy bullets and effect particles come from free-list pools and are reset by `init()`; game lists are compacted in place. Three.js objects are created only at start-up and per stage, never per entity per frame, and the smoke test enforces it. Enemies and items are not pooled.
+
+**Why:** [#20](https://github.com/moamoamorte/x-76/issues/20), ahead of enemies and effects becoming 3D meshes (#7, #9), when per-frame churn would cost more. Enemies and items are spawned at most a few per second, so pooling them buys little and their constructors carry per-type state that would all need resetting.
+
+**Consequence:** a new bullet kind must reset its fields in `PBullet.init()`; a new particle field goes in `Particle.init()`. `tools/bench.py` exists to measure this kind of change. Measured with it on a fire-heavy run, the simulation allocates 13–26% less (interleaved runs; the absolute numbers drift between sessions). But most of what the game allocates per frame is drawing, about a third 2D canvas work and two thirds inside Three.js's renderer (two passes a frame), so total GC frequency did not change measurably. The drawing side, and the simulation's remaining allocation that the pools don't explain, are [#70](https://github.com/moamoamorte/x-76/issues/70).

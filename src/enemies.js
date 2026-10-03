@@ -2,8 +2,9 @@
 import { W, H, clamp, lerp, rand, TAU, angleTo, turnToward, dist2 } from './util.js';
 import { snap } from './view.js';
 
+// Pooled (see Game#enemyShot).
 export class EBullet {
-  constructor(x, y, vx, vy, big = false) {
+  init(x, y, vx, vy, big = false) {
     this.x = x;
     this.y = y;
     this.vx = vx;
@@ -12,6 +13,7 @@ export class EBullet {
     this.r = big ? 3.5 : 2.5;
     this.t = 0;
     this.dead = false;
+    return this;
   }
   update(g) {
     this.t++;
@@ -55,6 +57,7 @@ export class Enemy {
     this.active = true;
     this.boom = 1;
     this.drop = null;
+    this.solo = [this];     // stands in for `parts` when an enemy is one circle
   }
 
   tick() {
@@ -253,7 +256,7 @@ class Turret extends Enemy {
       const side = this.up ? p.y < this.y : p.y > this.y;
       if (side && this.canShoot()) {
         const c = Math.cos(this.a), s = Math.sin(this.a);
-        g.ebullets.push(new EBullet(this.x + c * 9, this.y + s * 9, c * 1.7, s * 1.7));
+        g.enemyShot(this.x + c * 9, this.y + s * 9, c * 1.7, s * 1.7);
         g.audio.play('eshot');
       }
     }

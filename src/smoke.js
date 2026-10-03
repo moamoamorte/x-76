@@ -44,7 +44,20 @@ export function runSmoke(game) {
   const level = STAGES[0].level;
   const positions = [...level.CHECKPOINTS, level.WARNING_CAM, level.BOSS_CAM];
 
+  // The 3D layer must not create objects per entity per frame (#20): once
+  // the first position has warmed up, its scene graph keeps the same number
+  // of objects, and the GPU never holds more geometries than the scenes use
+  // (it uploads chunks lazily as they come into view, so that count grows).
+  const scenes = () => {
+    const geos = new Set();
+    let objects = 0;
+    for (const sc of [game.r3d.world, game.r3d.scene]) sc.traverse((o) => { objects++; if (o.geometry) geos.add(o.geometry); });
+    return { objects, geometries: geos.size };
+  };
+  let sceneBase = null;
+
   for (const cam of positions) {
+    if (!sceneBase && frames) sceneBase = scenes();
     game.warp({ cam, god: true, power: LOADOUT });
     game.banner = null;
     game.player.entering = false;
@@ -65,6 +78,12 @@ export function runSmoke(game) {
 
     hold('up', true); step(35); hold('up', false);
   }
+
+  const sceneEnd = scenes(), uploaded = game.r3d.renderer.info.memory.geometries;
+  if (sceneEnd.objects !== sceneBase.objects)
+    record(`3D scene object count changed during play: ${sceneBase.objects} after warm-up, ${sceneEnd.objects} at the end`);
+  if (uploaded > sceneEnd.geometries)
+    record(`3D layer holds ${uploaded} geometries on the GPU but its scenes use only ${sceneEnd.geometries}`);
 
   const errors = [...counts].map(([msg, n]) => (n > 1 ? `${msg} (×${n})` : msg));
   return report({ ok: counts.size === 0, errors, frames });
