@@ -267,15 +267,30 @@ const RIBBON_FRAG = `
   }`;
 const EDGE = 0.35, TIP = 0.4;   // weights at the sides and at the end caps
 const MAX_POINTS = 64;
+// Triangles between two points' vertices: centre, left, right of the first,
+// then of the second.
+const SEG = [0, 1, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2];
 
+// Methods here take objects and small integers, never fractional numbers:
+// V8 boxes a double passed to any call it doesn't inline, and these run for
+// thousands of vertices a frame (DECISIONS §24). The camera is a field, set
+// once a frame.
 class Ribbons {
   constructor(cap, order) {
     this.cap = cap;   // vertices
     this.n = 0;
     this.warned = false;
+    this.cam = 0;
+    this.hw = 0;
+    this.a = 0;
+    this.c = WHITE;
     this.px = new Float64Array(MAX_POINTS);
     this.py = new Float64Array(MAX_POINTS);
     this.np = 0;
+    // Per point: centre, left and right vertex; then the two cap tips.
+    this.vx = new Float64Array(MAX_POINTS * 3 + 2);
+    this.vy = new Float64Array(MAX_POINTS * 3 + 2);
+    this.vw = new Float64Array(MAX_POINTS * 3 + 2);
     const g = new THREE.BufferGeometry();
     this.pos = new THREE.BufferAttribute(new Float32Array(cap * 3), 3).setUsage(THREE.DynamicDrawUsage);
     this.col = new THREE.BufferAttribute(new Float32Array(cap * 4), 4).setUsage(THREE.DynamicDrawUsage);
@@ -300,25 +315,28 @@ class Ribbons {
     this.mesh.visible = false;
   }
 
-  begin(w, c, a) {
-    this.hw = w / 2;
-    this.c = c;
-    this.a = a;
-    this.np = 0;
+  // A laser's trail: layer 0 is the wide coloured glow, 1 the white-hot core.
+  trail(b, layer) {
+    const hue = HUE[b.color];
+    if (layer === 0) { this.hw = b.r * 0.9; this.c = hue.glow; this.a = 0.6; }
+    else { this.hw = b.r * 0.35; this.c = hue.core; this.a = 1; }
+    const n = Math.min(b.trailLen, MAX_POINTS), X = b.trailX, Y = b.trailY, cam = this.cam;
+    for (let i = 0; i < n; i++) { this.px[i] = X[i] - cam; this.py[i] = -Y[i]; }
+    this.np = n;
+    this.end();
   }
 
-  point(x, y) {
-    if (this.np < MAX_POINTS) {
-      this.px[this.np] = x;
-      this.py[this.np] = -y;
-      this.np++;
+  // One of the two strands spiralling round a beam from level 3.
+  wisp(b, ph) {
+    const hw = b.hw, hh = b.hh, x = b.x - this.cam, y = b.y, k = b.t * 0.9 + ph * Math.PI;
+    this.hw = 0.6; this.c = BEAM.wisp; this.a = 0.8;
+    let n = 0;
+    for (let i = -hw * 1.7; i <= hw && n < MAX_POINTS; i += 3, n++) {
+      this.px[n] = x + i;
+      this.py[n] = -(y + Math.sin(i * 0.25 + k) * hh * 1.1 * (1 - Math.abs(i) / (hw * 1.8)));
     }
-  }
-
-  vert(x, y, w) {
-    const i = this.n++, P = this.pos.array, C = this.col.array, c = this.c;
-    P[i * 3] = x; P[i * 3 + 1] = y; P[i * 3 + 2] = 0;
-    C[i * 4] = c[0]; C[i * 4 + 1] = c[1]; C[i * 4 + 2] = c[2]; C[i * 4 + 3] = this.a * w;
+    this.np = n;
+    this.end();
   }
 
   // Each point's sides lie along the normal of the line through its
@@ -330,35 +348,30 @@ class Ribbons {
       if (!this.warned) { this.warned = true; console.warn(`effects: ribbons are full (${this.cap}); dropping extras`); }
       return;
     }
-    let lx = 0, ly = 0, rx = 0, ry = 0;
+    const VX = this.vx, VY = this.vy, VW = this.vw, tip = n * 3;
     for (let i = 0; i < n; i++) {
       const a = i > 0 ? i - 1 : 0, b = i < n - 1 ? i + 1 : n - 1;
       let dx = X[b] - X[a], dy = Y[b] - Y[a];
       const d = Math.sqrt(dx * dx + dy * dy) || 1;
       dx /= d; dy /= d;
-      const nlx = X[i] - dy * hw, nly = Y[i] + dx * hw, nrx = X[i] + dy * hw, nry = Y[i] - dx * hw;
-      if (i === 0 || i === n - 1) {
-        // A pointed cap half the width long.
-        const s = i === 0 ? -1 : 1, cx = X[i] + dx * hw * s, cy = Y[i] + dy * hw * s;
-        this.vert(X[i], Y[i], 1); this.vert(nlx, nly, EDGE); this.vert(cx, cy, TIP);
-        this.vert(X[i], Y[i], 1); this.vert(cx, cy, TIP); this.vert(nrx, nry, EDGE);
-      }
-      if (i > 0) {
-        const px = X[i - 1], py = Y[i - 1];
-        this.vert(px, py, 1); this.vert(lx, ly, EDGE); this.vert(nlx, nly, EDGE);
-        this.vert(px, py, 1); this.vert(nlx, nly, EDGE); this.vert(X[i], Y[i], 1);
-        this.vert(px, py, 1); this.vert(X[i], Y[i], 1); this.vert(nrx, nry, EDGE);
-        this.vert(px, py, 1); this.vert(nrx, nry, EDGE); this.vert(rx, ry, EDGE);
-      }
-      lx = nlx; ly = nly; rx = nrx; ry = nry;
+      const j = i * 3;
+      VX[j] = X[i]; VY[j] = Y[i]; VW[j] = 1;
+      VX[j + 1] = X[i] - dy * hw; VY[j + 1] = Y[i] + dx * hw; VW[j + 1] = EDGE;
+      VX[j + 2] = X[i] + dy * hw; VY[j + 2] = Y[i] - dx * hw; VW[j + 2] = EDGE;
+      // Pointed caps, half the width long.
+      if (i === 0) { VX[tip] = X[i] - dx * hw; VY[tip] = Y[i] - dy * hw; VW[tip] = TIP; }
+      if (i === n - 1) { VX[tip + 1] = X[i] + dx * hw; VY[tip + 1] = Y[i] + dy * hw; VW[tip + 1] = TIP; }
     }
+    const last = (n - 1) * 3;
+    this.v(0); this.v(1); this.v(tip); this.v(0); this.v(tip); this.v(2);
+    this.v(last); this.v(last + 1); this.v(tip + 1); this.v(last); this.v(tip + 1); this.v(last + 2);
+    for (let i = 0; i < last; i += 3) for (let k = 0; k < 12; k++) this.v(i + SEG[k]);
   }
 
-  // A whole trail at once, from parallel coordinate arrays.
-  line(xs, ys, n, cam, w, c, a) {
-    this.begin(w, c, a);
-    for (let i = 0; i < n; i++) this.point(xs[i] - cam, ys[i]);
-    this.end();
+  v(j) {
+    const i = this.n++, P = this.pos.array, C = this.col.array, c = this.c;
+    P[i * 3] = this.vx[j]; P[i * 3 + 1] = this.vy[j]; P[i * 3 + 2] = 0;
+    C[i * 4] = c[0]; C[i * 4 + 1] = c[1]; C[i * 4 + 2] = c[2]; C[i * 4 + 3] = this.a * this.vw[j];
   }
 
   flush() {
@@ -423,60 +436,55 @@ export function createEffects() {
     }
   }
 
-  function playerShots(list, cam) {
+  // One small function per kind, taking only the bullet, so V8 can inline
+  // their put() calls; one big switch was over its inlining budget, and every
+  // call it left made boxed copies of the numbers passed (DECISIONS §24).
+  let cx = 0;   // camera x, set once a frame
+
+  function playerShots(list) {
     for (let i = 0; i < list.length; i++) {
-      const b = list[i], x = b.x - cam, y = b.y;
+      const b = list[i];
       switch (b.kind) {
         case 'shot':
-        case 'bitshot':
-          B.streak.put(x, y, 0, 6.5, 2.6, SHOT.glow, 0.55);
-          B.streak.put(x, y, 0, 5.5, 1.3, SHOT.core, 1);
-          break;
+        case 'bitshot': shot(b); break;
         case 'podshot':
-        case 'yshot': {
-          const r = b.r, spin = b.t * 0.2;
-          B.glow.put(x, y, spin, r + 1.5, r + 1.5, b.kind === 'yshot' ? Y_SHOT : POD_SHOT, 0.75);
-          B.glow.put(x, y, spin, r * 0.55, r * 0.55, WHITE, 1);
-          break;
-        }
-        case 'beam':
-          beam(b, x, y);
-          break;
+        case 'yshot': podShot(b); break;
+        case 'beam': beam(b); break;
         case 'helix':
         case 'ricochet':
-        case 'crawler': {
-          const hue = HUE[b.color];
-          trails.line(b.trailX, b.trailY, b.trailLen, cam, b.r * 1.8, hue.glow, 0.6);
-          trails.line(b.trailX, b.trailY, b.trailLen, cam, b.r * 0.7, hue.core, 1);
-          break;
-        }
-        case 'missile': {
-          const c = Math.cos(b.a), s = Math.sin(b.a);
-          B.missile.put(x, y, b.a, 1, 1, WHITE, 1, b.t * 0.3);
-          B.streak.put(x - c * 6.5, y - s * 6.5, b.a, 2.5 + Math.random() * 1.2, 1.3, MISSILE.flame, 0.9);
-          break;
-        }
+        case 'crawler': trails.trail(b, 0); trails.trail(b, 1); break;
+        case 'missile': missileShot(b); break;
       }
     }
+  }
+
+  function shot(b) {
+    B.streak.put(b.x - cx, b.y, 0, 6.5, 2.6, SHOT.glow, 0.55);
+    B.streak.put(b.x - cx, b.y, 0, 5.5, 1.3, SHOT.core, 1);
+  }
+
+  function podShot(b) {
+    const r = b.r, spin = b.t * 0.2;
+    B.glow.put(b.x - cx, b.y, spin, r + 1.5, r + 1.5, b.kind === 'yshot' ? Y_SHOT : POD_SHOT, 0.75);
+    B.glow.put(b.x - cx, b.y, spin, r * 0.55, r * 0.55, WHITE, 1);
+  }
+
+  function missileShot(b) {
+    const x = b.x - cx;
+    B.missile.put(x, b.y, b.a, 1, 1, WHITE, 1, b.t * 0.3);
+    B.streak.put(x - Math.cos(b.a) * 6.5, b.y - Math.sin(b.a) * 6.5, b.a, 2.5 + Math.random() * 1.2, 1.3, MISSILE.flame, 0.9);
   }
 
   // Halo, body and white-hot core, each a size up from the 2D ellipses they
   // replace (the prism's bulge covers less than an ellipse of the same
   // extent). Wisps spiral round it from level 3.
-  function beam(b, x, y) {
-    const { hw, hh, level, t } = b;
-    const flick = 0.85 + Math.random() * 0.15, roll = t * 0.15;
-    B.beam.put(x, y, 0, hw * 1.15, hh * 1.5, BEAM.halo, 0.5 * flick, roll);
-    B.beam.put(x, y, 0, hw * 1.02, hh * 1.05, BEAM.mid, 0.6 * flick, roll + 0.5);
-    B.beam.put(x, y, 0, hw * 0.88, hh * 0.42, WHITE, flick, -roll);
-    if (level < 3) return;
-    for (let ph = 0; ph < 2; ph++) {
-      trails.begin(1.2, BEAM.wisp, 0.8);
-      for (let i = -hw * 1.7; i <= hw; i += 3) {
-        trails.point(x + i, y + Math.sin(i * 0.25 + t * 0.9 + ph * Math.PI) * hh * 1.1 * (1 - Math.abs(i) / (hw * 1.8)));
-      }
-      trails.end();
-    }
+  function beam(b) {
+    const x = b.x - cx, hw = b.hw, hh = b.hh;
+    const flick = 0.85 + Math.random() * 0.15, roll = b.t * 0.15;
+    B.beam.put(x, b.y, 0, hw * 1.15, hh * 1.5, BEAM.halo, 0.5 * flick, roll);
+    B.beam.put(x, b.y, 0, hw * 1.02, hh * 1.05, BEAM.mid, 0.6 * flick, roll + 0.5);
+    B.beam.put(x, b.y, 0, hw * 0.88, hh * 0.42, WHITE, flick, -roll);
+    if (b.level >= 3) { trails.wisp(b, 0); trails.wisp(b, 1); }
   }
 
   // Grows with the charge, pulses, and flashes gold in step with the HUD
@@ -517,8 +525,9 @@ export function createEffects() {
     update(game, cam) {
       for (let i = 0; i < list.length; i++) list[i].n = 0;
       trails.n = 0;
+      cx = trails.cam = cam;
       particles(game.fx.p, cam);
-      playerShots(game.pbullets, cam);
+      playerShots(game.pbullets);
       orb(game.player, cam, game.t);
       enemyShots(game.ebullets, cam);
       for (let i = 0; i < list.length; i++) list[i].end();
