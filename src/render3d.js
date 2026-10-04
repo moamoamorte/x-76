@@ -1,4 +1,4 @@
-// 3D layer: renders the terrain, player ship and pod as lit 3D models on a
+// 3D layer: renders the terrain, enemies, player ship and pod as lit 3D models on a
 // transparent canvas between the two 2D canvases (see index.html). Game logic
 // stays 2D and untouched.
 import * as THREE from '../vendor/three.module.js';
@@ -9,6 +9,7 @@ import { createPod } from './models/pod.js';
 import { createShield } from './models/shield.js';
 import { createTerrain3D } from './models/terrain3d.js';
 import { createBackdrop3D } from './models/backdrop3d.js';
+import { createEnemyLayer } from './models/enemies/index.js';
 import { SHIP_SCALE, POD_SCALE, SHIELD_RADIUS, SHIELD_OFFSET, SHIELD_INV } from './tuning.js';
 
 // Camera distance from the play plane. Farther flattens the perspective: at
@@ -43,8 +44,10 @@ export class Render3D {
     this.setScale(view.s);
 
     // Two scenes drawn in turn, with the depth buffer cleared between them:
-    // terrain first, then the ship, pod and shield, which therefore never sink
-    // into a wall they graze. Both get the same lights.
+    // terrain and enemies first, then the ship, pod and shield, which therefore
+    // never sink into a wall they graze. Enemies share the terrain's depth
+    // buffer, so a turret sits on its block and a larva crawling through a
+    // wall is hidden by it. Both scenes get the same lights.
     this.world = new THREE.Scene();
     this.scene = new THREE.Scene();
     this.world.add(...lights());
@@ -66,6 +69,8 @@ export class Render3D {
     this.pod.group.scale.setScalar(POD_SCALE);
     this.shield = createShield({ rx: SHIELD_RADIUS.x, ry: SHIELD_RADIUS.y, fade: SHIELD_INV / 60 });
     this.scene.add(this.ship.group, this.pod.group, this.shield.group);
+    this.enemies = createEnemyLayer();
+    this.world.add(this.enemies.group);
     this.hideAll();
   }
 
@@ -185,6 +190,7 @@ export class Render3D {
       throttle: 1,
     });
     if (this.terrain) this.terrain.group.visible = this.backdrop.group.visible = false;
+    this.enemies.group.visible = false;
     this.aimCamera(0, 0);
     this.draw();
   }
@@ -198,6 +204,8 @@ export class Render3D {
     this.terrain.group.visible = this.backdrop.group.visible = true;
     this.terrain.update(camD, W);
     this.backdrop.update(camD, W);
+    this.enemies.group.visible = true;
+    this.enemies.update(game.enemies, camD);
     this.aimCamera(-shake.x, shake.y);
 
     // Respawn invulnerability blinks; the shorter window after a shield hit doesn't.

@@ -4,6 +4,7 @@ import * as THREE from '../vendor/three.module.js';
 import { createShip } from './models/ship.js';
 import { createPod } from './models/pod.js';
 import { createShield } from './models/shield.js';
+import { createEnemyModel, SPECS } from './models/enemies/index.js';
 import { Input } from './input.js';
 import {
   shipSpeed, TILT_EASE, TURN_EASE, CHARGE_DELAY, CHARGE_RATE, BEAM_MIN_CHARGE, beamLevel, DOCK, SHIP_SCALE, POD_SCALE,
@@ -34,6 +35,12 @@ grid.position.y = -18;
 scene.add(grid);
 
 const models = { ship: createShip(), pod: createPod({ color: 'red' }) };
+// Enemies are modelled in game pixels; scaled like the ship so sizes compare.
+const ENEMIES = Object.keys(SPECS);
+for (const k of ENEMIES) {
+  models[k] = createEnemyModel(k);
+  models[k].group.scale.setScalar(1 / SHIP_SCALE);
+}
 for (const m of Object.values(models)) scene.add(m.group);
 let current = 'ship';
 
@@ -393,7 +400,7 @@ for (const b of document.querySelectorAll('[data-view]')) {
   b.addEventListener('click', () => {
     const [az, el] = VIEWS[b.dataset.view];
     cam.az = az; cam.el = el;
-    const pose = basePose[current];
+    const pose = basePose[current] || [0, 0];   // enemies pose themselves
     models[current].group.rotation.set(...(b.dataset.view === 'side' ? [0, 0] : pose), 0);
   });
 }
@@ -435,6 +442,7 @@ function frame(now) {
   models.pod.group.visible = podVisible;
   const podAlone = !playing && !POD_DEMOS.has(demo.mode) && current === 'pod';
   if (podAlone) models.pod.group.position.set(0, 0, 0);
+  for (const k of ENEMIES) models[k].group.visible = !playing && !POD_DEMOS.has(demo.mode) && current === k;
   models.pod.group.scale.setScalar(podAlone ? 1 : POD_WITH_SHIP);
 
   if (!state.pause) {
@@ -452,6 +460,7 @@ function frame(now) {
       if (state.spin) models[current].group.rotation.y += dt * 0.6;
     }
     models.pod.update(dt, { charge: playing ? play.charge : 0 });
+    if (ENEMIES.includes(current)) models[current].update(dt);
     stepShots(dt);
   }
   shield.group.visible = demo.mode === 'shield';

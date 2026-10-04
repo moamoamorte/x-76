@@ -14,11 +14,11 @@ src/            game + harness modules
 
 | File | Lines | Contents |
 | --- | --- | --- |
-| `src/main.js` | 944 | Game loop, state machine, spawning, collision, HUD, overlays, debug warp, "WebGL required" screen |
+| `src/main.js` | 957 | Game loop, state machine, spawning, collision, HUD, overlays, hitbox overlay, debug warp, "WebGL required" screen |
 | `src/stages.js` | 9 | Stage registry: id, name, level module, boss class |
 | `src/player.js` | 567 | Player, pod, bits, every player projectile |
 | `src/tuning.js` | 47 | Handling constants shared by the game and the preview sandbox |
-| `src/enemies.js` | 624 | Enemy base + 8 enemy types, enemy bullets |
+| `src/enemies.js` | 408 | Enemy base + 9 enemy types (behaviour only; drawn by `models/enemies/`), enemy bullets |
 | `src/boss.js` | 406 | Stage 1 boss ("Oculus Bloom") |
 | `src/level1.js` | 191 | Stage 1 terrain shape, backdrop spans and spawn script |
 | `src/terrain.js` | 79 | Tile collision grid and depth map |
@@ -33,15 +33,21 @@ src/            game + harness modules
 | `src/smoke.js` | 105 | `?smoke=1`: scripted headless run for `tools/smoke.py` |
 | `src/bench.js` | 83 | `?bench=1`: allocation benchmark for `tools/bench.py` |
 | `src/view.js` | 30 | Display scale (logical → device pixels), `snap()`, scaled offscreen canvases |
-| `src/render3d.js` | 249 | 3D layer: perspective camera; draws terrain, then ship, pod and shield |
+| `src/render3d.js` | 257 | 3D layer: perspective camera; draws terrain and enemies, then ship, pod and shield |
 | `src/models/ship.js` | 188 | Procedural ship model |
 | `src/models/pod.js` | 152 | Procedural pod model |
 | `src/models/shield.js` | 91 | Faceted shield bubble with an impact-ripple shader |
 | `src/models/terrain3d.js` | 214 | Stage terrain built from the tile grid: chamfered blocks, decals, ink lines |
 | `src/models/backdrop3d.js` | 173 | Station interior and boss chamber walls, set back in depth |
+| `src/models/enemies/kit.js` | 219 | Enemy pieces: baking primitives into one geometry, instanced meshes, toon + glow + hit-flash material, a matrix stack for posing |
+| `src/models/enemies/index.js` | 83 | The enemy layer (every type's pieces, re-posed from game state each frame) and single-model wrappers for the harness |
+| `src/models/enemies/flyers.js` | 115 | Whirler (drifter), Dart, Porter (carrier) |
+| `src/models/enemies/mounts.js` | 97 | Turret, Hatch |
+| `src/models/enemies/walkers.js` | 105 | Hopper, Bulwark |
+| `src/models/enemies/creatures.js` | 103 | Larva, Coil Wyrm (serpent) |
 | `src/models/geom.js` | 54 | Triangle-by-triangle geometry builder with vertex colours, shared by the two above |
 | `src/models/materials.js` | 128 | Toon ramp, ink-outline shader, merging static parts, shared palette |
-| `src/preview.js` | 445 | Harness: orbit, sequences, fly mode |
+| `src/preview.js` | 489 | Harness: orbit, sequences, fly mode, every model including enemies |
 | `src/livereload.js` | 34 | Polls `/__mtime`, reloads on change |
 
 ## Game loop
@@ -101,11 +107,11 @@ Back to front (DECISIONS §22):
 | Layer | Canvas | Draws |
 | --- | --- | --- |
 | Back 2D | `#back` (`bctx`) | Starfield and nebula |
-| 3D, pass 1 | `#screen3d` | Backdrops (z −110 to −230, fogged), then terrain |
+| 3D, pass 1 | `#screen3d` | Backdrops (z −110 to −230, fogged), terrain and enemies, depth-tested together |
 | 3D, pass 2 | `#screen3d` | Ship, pod, shield bubble, always over terrain (depth cleared between passes) |
-| Front 2D | `#screen` (`ctx`) | Enemies, boss, items, bullets, bits, the charge orb, effects, popups, HUD, overlays |
+| Front 2D | `#screen` (`ctx`) | Boss, items, bullets, bits, the charge orb, effects, popups, HUD, overlays |
 
-The WebGL canvas covers only the playfield (93.333% height, the HUD strip excluded). Screen shake is one offset applied to all three layers, so sprites never slide off the terrain. Front-layer sprites draw over the 3D ship, so enemy bullets stay visible over it; overlays (pause, game over) dim everything. Until enemies are 3D, a sprite is always in front of terrain, which matches how the 2D game layered them. The shield bubble reads `player.shield` and `player.lastHit`.
+The WebGL canvas covers only the playfield (93.333% height, the HUD strip excluded). Screen shake is one offset applied to all three layers, so sprites never slide off the terrain. Front-layer sprites draw over the 3D ship, so enemy bullets stay visible over it; overlays (pause, game over) dim everything. Enemies share the terrain's depth buffer (DECISIONS §25): a turret sits on its block, and anything that strays into a wall is hidden by it. The ship pass draws over them. The boss is still a 2D sprite, so the larvae it releases start out under it. `game.showHitboxes = true` draws every enemy's collision circles (and the player's) over the lot. The shield bubble reads `player.shield` and `player.lastHit`.
 
 `render3d.js`:
 
@@ -114,6 +120,7 @@ The WebGL canvas covers only the playfield (93.333% height, the HUD strip exclud
 - The ship model is scaled 0.78 and the pod 0.72 (`SHIP_SCALE`, `POD_SCALE` in `tuning.js`), which is what makes them the right size on a 384px-wide field.
 - **WebGL is required.** `Render3D.create()` returns `null` when WebGL is unavailable; the boot code in `main.js` then shows a "WebGL required" screen on the 2D canvas and never creates the `Game`, so game code can assume `game.r3d` exists. See DECISIONS §21.
 - The layer reads `player.tilt` (vertical lean) and `player.turn` (horizontal lean) and passes them as `bank` and `dip`. The ship model uses only dip's magnitude, so the nose drops whichever way the ship slides. It also watches `pod.state` and triggers the pod's clamp/release animations on transitions.
+- Enemies are drawn by `models/enemies/`: each class names its model in `static model` (`'turret'`, `'larva'`...), and the layer re-poses every live enemy from its state each frame (position, heading, walk phase, hatch opening, `flash`). The boss has no `model`, so it still draws itself.
 - `renderTitle(t)` poses the ship larger and turning for the title screen; `render()` resets scale and pose.
 
 ## Models
@@ -127,6 +134,7 @@ Built in code, no asset files. Conventions:
 - **Merged parts**: once built, `mergeParts(group)` bakes every part under a group that moves as one (the ship's `bank`, the pod's spinning plates, each claw hinge) into one mesh per material and one outline shell, pushed out by each part's own thickness. A part that needs to move on its own must sit in its own group and be merged separately, or not at all.
 - Ship: four swept arms in an X, hull tapering to a drooped nose, faceted canopy on the nose, muzzle flash and recoil on `fire(power)`.
 - Pod: faceted core inside three armour plates on a faceted ring, three claws on a rig that flips to face the hull it grips. `clamp()` snaps the claws shut with a jolt and flash; `release()` opens them.
+- **Enemies** are built differently, because there are many of each: every type is a few rigid *pieces* (a body, a leg, a barrel, a door), and each piece is one `InstancedMesh` plus one instanced ink shell holding every copy on screen. A `Piece` collects primitives with a colour each and bakes them into one geometry with vertex colours and a per-vertex glow flag (lights and eyes skip shading); one shared toon material (`SOLID` in `kit.js`) adds glow and a per-instance hit flash. Each spec's `draw(e, P, X)` poses its pieces from the enemy with a small matrix stack (`X.at(x, y)`, then `t`/`rx`/`ry`/`rz`/`s` like nested groups) and `put`s them. Draw calls depend on which piece types are on screen, never on enemy count, and the scene graph is fixed at start-up. Instance capacities (`cap`) are about twice the most stage 1 has alive at once; overflowing one warns once and drops the extra copies. Units are game pixels, so the models need no scale; greys sit a little darker and cooler than the ship's, with colour kept to lights and weak points, and the organic Larva and Coil Wyrm in muted greens and mauves.
 
 ## Audio
 
@@ -138,6 +146,7 @@ Everything is synthesised at runtime (`audio.js`): oscillators and filtered nois
 
 - **Fly it** — a sandbox using the game's own `Input` class and the game's per-frame constants imported from `tuning.js` (speed, banking, charge timing, beam levels, pod state machine), so handling matches the game. Conversion: preview world units = game pixels ÷ 0.78.
 - **Sequences** — firing, charged beam, pod fly-in, pod docking front/rear. Each loops and can be replayed.
+- The model list includes every enemy, each driven by a small stand-in for its game state (a `demo` in its spec) and flashing as if hit every few seconds.
 - Orbit/zoom, preset camera angles, outline/wireframe/grid toggles, light angle, backgrounds, PNG export.
 - The active sequence is remembered in `sessionStorage` so a live reload drops you back in place.
 
