@@ -658,8 +658,6 @@ class Game {
     ctx.rect(0, 0, W, H);
     ctx.clip();
     ctx.translate(shake.x, shake.y);
-    for (let i = 0; i < this.items.length; i++) this.items[i].draw(ctx, camD);
-    for (let i = 0; i < this.bits.length; i++) this.bits[i].draw(ctx, camD);
     if (this.showHitboxes) this.drawHitboxes(camD);
     for (let i = 0; i < this.popups.length; i++) {
       const pu = this.popups[i];
