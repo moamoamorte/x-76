@@ -1,8 +1,8 @@
-// Particle effects: explosions, sparks, smoke, shockwave rings.
+// Particle effects: explosions, sparks, smoke, shockwave rings. Simulation
+// only; models/effects.js draws them.
 import { rand, TAU } from './util.js';
 import { Pool, compact } from './pool.js';
 
-const FIRE = ['#fff8d0', '#ffe070', '#ffb030', '#ff6a1a', '#c8321a', '#5a1d14'];
 const MAX = 900;
 
 // One shape for every kind, so V8 keeps a single hidden class for them all.
@@ -116,52 +116,5 @@ export class FX {
     this.shake *= 0.88;
     if (this.shake < 0.2) this.shake = 0;
     if (this.flash > 0) this.flash--;
-  }
-
-  draw(ctx, cam) {
-    const p = this.p;
-    ctx.save();
-    for (let i = 0; i < p.length; i++) {
-      const o = p[i];
-      if (o.k !== 'smoke') continue;
-      const t = o.life / o.max;
-      ctx.globalAlpha = t * 0.35;
-      ctx.fillStyle = '#3a3440';
-      ctx.beginPath();
-      ctx.arc(o.x - cam, o.y, o.r, 0, TAU);
-      ctx.fill();
-    }
-    ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < p.length; i++) {
-      const o = p[i];
-      const t = o.life / o.max;
-      const x = o.x - cam;
-      switch (o.k) {
-        case 'fire': {
-          const ci = Math.min(FIRE.length - 1, Math.floor((1 - t) * FIRE.length));
-          ctx.globalAlpha = Math.min(1, t * 1.6);
-          ctx.fillStyle = FIRE[ci];
-          ctx.beginPath();
-          ctx.arc(x, o.y, o.r * (0.5 + t * 0.7), 0, TAU);
-          ctx.fill();
-          break;
-        }
-        case 'spark':
-        case 'suck':
-          ctx.globalAlpha = t;
-          ctx.fillStyle = o.c;
-          ctx.fillRect(x - 1, o.y - 1, 2, 2);
-          break;
-        case 'ring':
-          ctx.globalAlpha = t;
-          ctx.strokeStyle = o.c;
-          ctx.lineWidth = 2 * t + 0.5;
-          ctx.beginPath();
-          ctx.arc(x, o.y, o.r, 0, TAU);
-          ctx.stroke();
-          break;
-      }
-    }
-    ctx.restore();
   }
 }

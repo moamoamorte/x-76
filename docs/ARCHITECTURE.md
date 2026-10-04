@@ -14,17 +14,17 @@ src/            game + harness modules
 
 | File | Lines | Contents |
 | --- | --- | --- |
-| `src/main.js` | 956 | Game loop, state machine, spawning, collision, HUD, overlays, hitbox overlay, debug warp, "WebGL required" screen |
+| `src/main.js` | 952 | Game loop, state machine, spawning, collision, HUD, overlays, hitbox overlay, debug warp, "WebGL required" screen |
 | `src/stages.js` | 9 | Stage registry: id, name, level module, boss class |
-| `src/player.js` | 567 | Player, pod, bits, every player projectile |
+| `src/player.js` | 453 | Player, pod, bits, every player projectile (behaviour; drawn by `models/effects.js`) |
 | `src/tuning.js` | 47 | Handling constants shared by the game and the preview sandbox |
-| `src/enemies.js` | 408 | Enemy base + 9 enemy types (behaviour only; drawn by `models/enemies/`), enemy bullets |
+| `src/enemies.js` | 392 | Enemy base + 9 enemy types (behaviour only; drawn by `models/enemies/`), enemy bullets |
 | `src/boss.js` | 190 | Stage 1 boss ("Oculus Bloom"): behaviour and layout; drawn by `models/enemies/bloom.js` |
 | `src/level1.js` | 191 | Stage 1 terrain shape, backdrop spans and spawn script |
 | `src/terrain.js` | 79 | Tile collision grid and depth map |
 | `src/background.js` | 97 | Starfield and nebula (2D, behind everything) |
 | `src/audio.js` | 333 | Synthesised sound effects + music sequencer |
-| `src/fx.js` | 167 | Particles, explosions, screen shake |
+| `src/fx.js` | 120 | Particles, explosions, screen shake (simulation; drawn by `models/effects.js`) |
 | `src/items.js` | 133 | Power-ups |
 | `src/font.js` | 135 | Angular stroke font on a 5x7 grid, with a render cache |
 | `src/input.js` | 83 | Keyboard + gamepad, edge detection |
@@ -33,7 +33,7 @@ src/            game + harness modules
 | `src/smoke.js` | 105 | `?smoke=1`: scripted headless run for `tools/smoke.py` |
 | `src/bench.js` | 83 | `?bench=1`: allocation benchmark for `tools/bench.py` |
 | `src/view.js` | 30 | Display scale (logical → device pixels), `snap()`, scaled offscreen canvases |
-| `src/render3d.js` | 260 | 3D layer: perspective camera; draws terrain and enemies, then ship, pod, shield and boss |
+| `src/render3d.js` | 273 | 3D layer: perspective camera; draws terrain and enemies, then ship, pod, shield and boss, then effects |
 | `src/models/ship.js` | 188 | Procedural ship model |
 | `src/models/pod.js` | 152 | Procedural pod model |
 | `src/models/shield.js` | 91 | Faceted shield bubble with an impact-ripple shader |
@@ -46,6 +46,7 @@ src/            game + harness modules
 | `src/models/enemies/walkers.js` | 105 | Hopper, Bulwark |
 | `src/models/enemies/creatures.js` | 103 | Larva, Coil Wyrm (serpent) |
 | `src/models/enemies/bloom.js` | 259 | Oculus Bloom, the boss: faceted flesh wall, iris petals, eye, tentacles, spore mouths |
+| `src/models/effects.js` | 528 | Particles, bullets, beam and charge orb: instanced shape batches and trail ribbons, refilled from game state each frame |
 | `src/models/geom.js` | 54 | Triangle-by-triangle geometry builder with vertex colours, shared by the two above |
 | `src/models/materials.js` | 128 | Toon ramp, ink-outline shader, merging static parts, shared palette |
 | `src/preview.js` | 489 | Harness: orbit, sequences, fly mode, every model including enemies |
@@ -110,9 +111,10 @@ Back to front (DECISIONS §22):
 | Back 2D | `#back` (`bctx`) | Starfield and nebula |
 | 3D, pass 1 | `#screen3d` | Backdrops (z −110 to −230, fogged), terrain and enemies, depth-tested together |
 | 3D, pass 2 | `#screen3d` | Ship, pod, shield bubble and the boss, always over terrain (depth cleared between passes) |
-| Front 2D | `#screen` (`ctx`) | Items, bullets, bits, the charge orb, effects, popups, HUD, overlays |
+| 3D, pass 3 | `#screen3d` | Effects: particles, player and enemy bullets, the beam and the charge orb, with no depth test |
+| Front 2D | `#screen` (`ctx`) | Items, bits, score popups, the white flash, HUD, overlays |
 
-The WebGL canvas covers only the playfield (93.333% height, the HUD strip excluded). Screen shake is one offset applied to all three layers, so sprites never slide off the terrain. Front-layer sprites draw over the 3D ship, so enemy bullets stay visible over it; overlays (pause, game over) dim everything. Enemies share the terrain's depth buffer (DECISIONS §25): a turret sits on its block, and anything that strays into a wall is hidden by it. The ship pass draws over them. So does the boss, which grows over the chamber's back wall (terrain from column 744) and would otherwise sink behind its face (DECISIONS §26); the larvae it releases start out under it. `game.showHitboxes = true` draws every enemy's collision circles (and the player's) over the lot. The shield bubble reads `player.shield` and `player.lastHit`.
+The WebGL canvas covers only the playfield (93.333% height, the HUD strip excluded). Screen shake is one offset applied to all three layers, so sprites never slide off the terrain. Effects draw last in the 3D layer and ignore depth, so enemy bullets stay visible over the ship and explosions over the boss (DECISIONS §27); front-layer sprites (items, bits) draw over everything 3D, and overlays (pause, game over) dim everything. Enemies share the terrain's depth buffer (DECISIONS §25): a turret sits on its block, and anything that strays into a wall is hidden by it. The ship pass draws over them. So does the boss, which grows over the chamber's back wall (terrain from column 744) and would otherwise sink behind its face (DECISIONS §26); the larvae it releases start out under it. `game.showHitboxes = true` draws every enemy's collision circles (and the player's) over the lot. The shield bubble reads `player.shield` and `player.lastHit`.
 
 `render3d.js`:
 
@@ -136,7 +138,9 @@ Built in code, no asset files. Conventions:
 - Ship: four swept arms in an X, hull tapering to a drooped nose, faceted canopy on the nose, muzzle flash and recoil on `fire(power)`.
 - Pod: faceted core inside three armour plates on a faceted ring, three claws on a rig that flips to face the hull it grips. `clamp()` snaps the claws shut with a jolt and flash; `release()` opens them.
 - **Enemies** are built differently, because there are many of each: every type is a few rigid *pieces* (a body, a leg, a barrel, a door), and each piece is one `InstancedMesh` plus one instanced ink shell holding every copy on screen. A `Piece` collects primitives with a colour each and bakes them into one geometry with vertex colours and a per-vertex glow flag (lights and eyes skip shading); a patched toon material adds glow and a per-instance hit flash. There's one copy per pass and per tinted-or-not (`solidMaterial(front, tint)` in `kit.js`), because Three re-acquires a material's program whenever the fog, lights or per-instance colours it is drawn with change (DECISIONS §26). Each spec's `draw(e, P, X)` poses its pieces from the enemy with a small matrix stack (`X.at(x, y)`, then `t`/`rx`/`ry`/`rz`/`s` like nested groups) and `put`s them. Draw calls depend on which piece types are on screen, never on enemy count, and the scene graph is fixed at start-up. Instance capacities (`cap`) are about twice the most stage 1 has alive at once; overflowing one warns once and drops the extra copies. Units are game pixels, so the models need no scale; greys sit a little darker and cooler than the ship's, with colour kept to lights and weak points, and the organic Larva and Coil Wyrm in muted greens and mauves.
-- **Oculus Bloom** (the boss) uses the same kit with one instance of each piece. Its wall is a jittered grid of flat triangles, each its own flesh shade (a piece can keep a geometry's own vertex colours), sunk into a socket around the eye, with bone ribs, veins, knobs, sockets and spore mouths baked on. Eight iris petals hinge at the rim: closed they meet over the eye in a shallow cone, and open they fold back toward the camera. The crater's glow and the iris brighten with `open`, and the pupil widens. Tentacle rings are placed from `tent[].segs`. The body flushes red in the second phase and darkens while dying. The mouths' teeth gape for a moment after `launchT`, the one field the boss keeps only for the renderer. The model disappears under the death flash (`st` 150); the 2D explosions carry on.
+- **Oculus Bloom** (the boss) uses the same kit with one instance of each piece. Its wall is a jittered grid of flat triangles, each its own flesh shade (a piece can keep a geometry's own vertex colours), sunk into a socket around the eye, with bone ribs, veins, knobs, sockets and spore mouths baked on. Eight iris petals hinge at the rim: closed they meet over the eye in a shallow cone, and open they fold back toward the camera. The crater's glow and the iris brighten with `open`, and the pupil widens. Tentacle rings are placed from `tent[].segs`. The body flushes red in the second phase and darkens while dying. The mouths' teeth gape for a moment after `launchT`, the one field the boss keeps only for the renderer. The model disappears under the death flash (`st` 150); the explosions carry on.
+
+- **Effects** (`models/effects.js`) are read each frame from `fx.p`, `pbullets`, `ebullets` and the player's charge, and drawn as a few instanced *shapes* rather than one mesh per thing: a soft octagon (fire, pod shots, the orb's halo), a diamond streak (sparks, shots, exhaust), a 12-sided ring, a faceted beam prism, a gem (the orb, enemy bullets) and a missile. Each shape is one `InstancedBufferGeometry` whose instances are placed in the shader from three `vec4` attributes (position and roll; turn, length, width and band; colour and alpha), so a batch is one draw call however full it is, and an empty one is hidden. Shapes carry a per-vertex weight that fades alpha toward the rim, which gives soft glow with straight edges. Laser trails and the beam's wisps are ribbons written into one shared vertex buffer: neighbouring segments share their joint vertices, so a bending trail doesn't brighten at every joint the way overlapping additive pieces do. Glow is additive and also raises alpha by its brightest channel, so the canvas never holds a colour brighter than its alpha (undefined in premultiplied compositing); smoke, missiles and enemy bullets blend normally, and enemy bullets draw last. Capacities are fixed; overflowing one warns once and drops the extras. Screen shake moves the camera, so effects shake with the rest. The full-screen white flash stays 2D.
 
 ## Audio
 

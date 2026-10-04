@@ -1,5 +1,5 @@
 // Enemy roster for stage 1 (all original designs) plus enemy bullets.
-import { W, H, clamp, lerp, rand, TAU, angleTo, turnToward, dist2 } from './util.js';
+import { W, H, clamp, lerp, rand, angleTo, turnToward, dist2 } from './util.js';
 
 // Pooled (see Game#enemyShot).
 export class EBullet {
@@ -20,22 +20,6 @@ export class EBullet {
     this.y += this.vy;
     const sx = this.x - g.cam;
     if (sx < -10 || sx > W + 10 || this.y < -10 || this.y > H + 10 || g.terrain.solidAt(this.x, this.y)) this.dead = true;
-  }
-  draw(ctx, cam) {
-    const x = this.x - cam, y = this.y;
-    const r = this.r + ((this.t >> 2) & 1) * 0.6;
-    ctx.fillStyle = this.big ? 'rgba(255,60,140,0.55)' : 'rgba(255,90,50,0.55)';
-    ctx.beginPath();
-    ctx.arc(x, y, r + 1.5, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = this.big ? '#ff9ad0' : '#ffb070';
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, TAU);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(x, y, r * 0.45, 0, TAU);
-    ctx.fill();
   }
 }
 

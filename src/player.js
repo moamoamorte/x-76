@@ -1,6 +1,5 @@
 // Player ship, the detachable pod, satellite bits, and all player projectiles.
 import { W, H, clamp, lerp, TAU, angleTo, turnToward } from './util.js';
-import { LASER_HUE } from './items.js';
 import { snap } from './view.js';
 import {
   shipSpeed, TILT_EASE, TURN_EASE, CHARGE_DELAY, CHARGE_RATE, BEAM_MIN_CHARGE, beamLevel, BEAM, DOCK,
@@ -147,101 +146,6 @@ export class PBullet {
     const sx = this.x - g.cam;
     if (sx < -60 || sx > W + 60 || this.y < -30 || this.y > H + 30) this.dead = true;
   }
-
-  draw(ctx, cam) {
-    const x = this.x - cam, y = this.y;
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    switch (this.kind) {
-      case 'shot':
-      case 'bitshot':
-        ctx.fillStyle = 'rgba(255,170,60,0.55)';
-        ctx.fillRect(x - 5, y - 2, 10, 4);
-        ctx.fillStyle = '#fff6c8';
-        ctx.fillRect(x - 4, y - 1, 8, 2);
-        break;
-      case 'podshot':
-      case 'yshot': {
-        ctx.fillStyle = this.kind === 'yshot' ? 'rgba(255,220,60,0.6)' : 'rgba(255,120,50,0.6)';
-        ctx.beginPath();
-        ctx.arc(x, y, this.r + 1.5, 0, TAU);
-        ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(x, y, this.r * 0.5, 0, TAU);
-        ctx.fill();
-        break;
-      }
-      case 'beam':
-        this.drawBeam(ctx, x, y);
-        break;
-      case 'helix':
-      case 'ricochet':
-      case 'crawler': {
-        const hue = LASER_HUE[this.color];
-        ctx.lineCap = 'round';
-        ctx.strokeStyle = hue.glow;
-        ctx.lineWidth = this.r * 1.8;
-        this.strokeTrail(ctx, cam, 0.6);
-        ctx.strokeStyle = hue.core;
-        ctx.lineWidth = this.r * 0.7;
-        this.strokeTrail(ctx, cam, 1);
-        break;
-      }
-      case 'missile':
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.translate(x, y);
-        ctx.rotate(this.a);
-        ctx.fillStyle = '#ff9a3a';
-        ctx.fillRect(-7, -1, 3, 2);
-        ctx.fillStyle = '#c0c8d8';
-        ctx.fillRect(-4, -1.5, 8, 3);
-        ctx.fillStyle = '#ff4a3a';
-        ctx.fillRect(3, -1, 2, 2);
-        break;
-    }
-    ctx.restore();
-  }
-
-  strokeTrail(ctx, cam, alpha) {
-    if (this.trailLen < 2) return;
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.moveTo(this.trailX[0] - cam, this.trailY[0]);
-    for (let i = 1; i < this.trailLen; i++) ctx.lineTo(this.trailX[i] - cam, this.trailY[i]);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
-
-  drawBeam(ctx, x, y) {
-    const { hw, hh, level } = this;
-    const flick = 0.85 + Math.random() * 0.15;
-    const ell = (rx, ry, color, a) => {
-      ctx.globalAlpha = a * flick;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.ellipse(x, y, rx, ry, 0, 0, TAU);
-      ctx.fill();
-    };
-    ell(hw * 1.1, hh * 1.4, '#2a4aff', 0.45);
-    ell(hw, hh, '#6ab8ff', 0.7);
-    ell(hw * 0.85, hh * 0.45, '#ffffff', 1);
-    if (level >= 3) {
-      ctx.globalAlpha = 0.8;
-      ctx.strokeStyle = '#c8ecff';
-      ctx.lineWidth = 1;
-      for (const ph of [0, Math.PI]) {
-        ctx.beginPath();
-        for (let i = -hw * 1.7; i <= hw; i += 3) {
-          const yy = y + Math.sin(i * 0.25 + this.t * 0.9 + ph) * hh * 1.1 * (1 - Math.abs(i) / (hw * 1.8));
-          if (i === -hw * 1.7) ctx.moveTo(x + i, yy);
-          else ctx.lineTo(x + i, yy);
-        }
-        ctx.stroke();
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,24 +268,6 @@ export class Player {
     if (ring) ring.vr = 1.5 + L * 0.4;
     g.audio.play('beam', L);
     g.r3d.ship.fire(1 + L * 0.4);
-  }
-
-  // Charge orb at the nose: the one part of the player still drawn in 2D.
-  drawCharge(ctx, cam) {
-    if (this.dead || this.charge <= 0) return;
-    const x = snap(this.x) - cam, y = snap(this.y);
-    {
-      const r = 2 + this.charge * 6 + Math.sin(this.t * 0.6) * 1;
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const gr = ctx.createRadialGradient(x + 21, y, 0, x + 21, y, r * 1.8);
-      gr.addColorStop(0, '#ffffff');
-      gr.addColorStop(0.35, this.charge >= 1 && this.t % 8 < 4 ? '#ffe070' : '#7ac8ff');
-      gr.addColorStop(1, 'rgba(40,80,255,0)');
-      ctx.fillStyle = gr;
-      ctx.fillRect(x + 21 - r * 2, y - r * 2, r * 4, r * 4);
-      ctx.restore();
-    }
   }
 }
 
