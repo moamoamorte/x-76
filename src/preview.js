@@ -6,9 +6,13 @@ import { createPod } from './models/pod.js';
 import { createShield } from './models/shield.js';
 import { createEnemyModel, SPECS } from './models/enemies/index.js';
 import { PICKUPS } from './models/pickups.js';
+import { createEffects } from './models/effects.js';
+import { FX } from './fx.js';
+import { PBullet } from './player.js';
+import { Pool, compact } from './pool.js';
 import { Input } from './input.js';
 import {
-  shipSpeed, TILT_EASE, TURN_EASE, CHARGE_DELAY, CHARGE_RATE, BEAM_MIN_CHARGE, beamLevel, DOCK, SHIP_SCALE, POD_SCALE,
+  shipSpeed, TILT_EASE, TURN_EASE, CHARGE_DELAY, CHARGE_RATE, BEAM_MIN_CHARGE, beamLevel, BEAM, DOCK, SHIP_SCALE, POD_SCALE,
   POD_LAUNCH_FRONT, POD_LAUNCH_BACK, POD_LAUNCH_DRAG, POD_LAUNCH_STOP, POD_FOLLOW, POD_RECALL_SPEED, POD_GRAB_DIST,
   SHIELD_MAX, SHIELD_DAMAGE, SHIELD_RADIUS, SHIELD_OFFSET, SHIELD_INV,
 } from './tuning.js';
@@ -60,36 +64,71 @@ function placeCamera() {
   camera.lookAt(0, 0, 0);
 }
 
-// --- shared projectiles -----------------------------------------------------
-const shots = [];
-const shotMat = new THREE.MeshBasicMaterial({ color: 0xfff0b0, toneMapped: false });
-const beamMat = new THREE.MeshBasicMaterial({
-  color: 0x8fd4ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false,
-});
-const podShotMat = new THREE.MeshBasicMaterial({ color: 0xffa060, toneMapped: false });
+const U = 1 / SHIP_SCALE;      // game pixels -> preview world units
 
+// --- shots, beam and charge orb ---------------------------------------------
+// Drawn by the game's own effects layer, from stand-ins for the state it
+// reads: pooled PBullets, an FX for the beam's ring and the charge particles,
+// and a player with a position, clock and charge. All of it is in game
+// pixels, screen y down, so the layer's group is scaled to preview units. It
+// draws in a pass of its own after the scene, with no depth test, as in the
+// game (DECISIONS §27).
+const effects = createEffects();
+effects.group.scale.setScalar(U);
+const top = new THREE.Scene();
+top.add(effects.group);
+const fx = new FX();
+const bullets = new Pool(() => new PBullet());
+const sim = { fx, pbullets: [], ebullets: [], player: { x: 0, y: 0, t: 0, charge: 0, dead: false }, t: 0 };
+const releaseShot = (b) => bullets.release(b);
+const inView = (b) => Math.abs(b.x) < 400 && Math.abs(b.y) < 300;
+
+function shoot(kind, x, y, vx, vy) {
+  const b = bullets.acquire().init(kind, x, y, vx, vy);
+  sim.pbullets.push(b);
+  return b;
+}
 function clearShots() {
-  for (const s of shots) scene.remove(s.mesh);
-  shots.length = 0;
+  for (const b of sim.pbullets) bullets.release(b);
+  sim.pbullets.length = 0;
+  fx.reset();
+  sim.player.charge = 0;
 }
-function spawnShot(pos, { mat = shotMat, size = [5, 1.4, 1.4], speed = 150, life = 1.3, grow = false } = {}) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(...size), mat);
-  m.position.copy(pos);
-  scene.add(m);
-  shots.push({ mesh: m, life, speed, grow });
+
+// The ship's position in game pixels; the sequences keep it at the origin.
+const shipX = () => (demo.mode === 'play' ? play.x : 0) * SHIP_SCALE;
+const shipY = () => (demo.mode === 'play' ? -play.y : 0) * SHIP_SCALE;
+
+// As Player.fire and Player.fireBeam.
+function fireShot() {
+  let n = 0;
+  for (const b of sim.pbullets) if (b.kind === 'shot') n++;
+  if (n >= 6) return;
+  shoot('shot', shipX() + 18, shipY(), 8, 0);
+  models.ship.fire(1);
 }
-function stepShots(dt) {
-  for (let i = shots.length - 1; i >= 0; i--) {
-    const s = shots[i];
-    s.mesh.position.x += s.speed * dt;
-    s.life -= dt;
-    if (s.grow) s.mesh.scale.x = Math.min(2.4, s.mesh.scale.x + dt * 3);
-    if (s.life <= 0) { scene.remove(s.mesh); shots.splice(i, 1); }
-  }
+function fireBeam(L) {
+  const x = shipX(), y = shipY();
+  const b = shoot('beam', x + 16 + BEAM.hw[L], y, 8.5, 0);
+  b.hw = BEAM.hw[L]; b.hh = BEAM.hh[L]; b.power = BEAM.power[L]; b.level = L;
+  const ring = fx.emit('ring', x + 20, y, 0, 0, 2, 12, 12, '#aee6ff');
+  if (ring) ring.vr = 1.5 + L * 0.4;
+  models.ship.fire(1 + L * 0.4);
+}
+
+// One 60 Hz step of what the effects layer draws, in the game's order:
+// the charge particles, then bullets, then particles.
+function stepShots() {
+  const p = sim.player;
+  p.x = shipX(); p.y = shipY();
+  p.t++; sim.t++;
+  if (p.charge > 0 && p.t % 2 === 0) fx.suck(p.x + 22, p.y, p.charge >= 1 ? '#ffffff' : '#8ad8ff');
+  for (const b of sim.pbullets) { b.t++; b.x += b.vx; b.y += b.vy; }
+  compact(sim.pbullets, inView, releaseShot);
+  fx.update(0);
 }
 
 const v = new THREE.Vector3();
-const muzzleWorld = () => (scene.updateMatrixWorld(), models.ship.nose.localToWorld(v.set(14, 0, 0)).clone());
 // A point just behind the nose tip, so a docked pod swallows the tip.
 const nosePointWorld = () => (scene.updateMatrixWorld(), models.ship.nose.localToWorld(v.set(9.5, 0, 0)).clone());
 const tailPointWorld = () => (scene.updateMatrixWorld(), models.ship.group.localToWorld(v.set(-22, 0, 0)).clone());
@@ -98,7 +137,6 @@ const tailPointWorld = () => (scene.updateMatrixWorld(), models.ship.group.local
 // Uses the game's Input and its constants from tuning.js, so the handling,
 // charge timing and pod behaviour match the real thing.
 const input = new Input();
-const U = 1 / SHIP_SCALE;      // game pixels -> preview world units
 // Pod size relative to the ship, as in game. The pod keeps full size when shown
 // on its own so it fills the model view.
 const POD_WITH_SHIP = POD_SCALE / SHIP_SCALE;
@@ -121,14 +159,6 @@ const boundsBox = new THREE.LineSegments(
 );
 boundsBox.visible = false;
 scene.add(boundsBox);
-
-const chargeMesh = new THREE.Mesh(
-  new THREE.BoxGeometry(3, 3, 3),
-  new THREE.MeshBasicMaterial({ color: 0xaee6ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })
-);
-chargeMesh.position.set(15.5, 0, 0);
-chargeMesh.visible = false;
-models.ship.nose.add(chargeMesh);
 
 let autoFrame = true;
 function fitPlayArea() {
@@ -164,27 +194,21 @@ function stepPlay() {
   play.turn = THREE.MathUtils.lerp(play.turn, dx, TURN_EASE);
 
   if (input.pressed('fire')) {
-    models.ship.fire(1);
-    spawnShot(muzzleWorld());
-    if (play.pod.has && play.pod.state !== 'front' && play.pod.state !== 'back') {
-      spawnShot(new THREE.Vector3(play.pod.x + 8, play.pod.y, 0), { mat: podShotMat, size: [4, 2, 2], speed: 120, life: 1.1 });
-    }
+    fireShot();
+    // A free pod fires a level 1 pod shot; docked, the game's pod fires its laser, which isn't modelled here.
+    const pd = play.pod;
+    if (pd.has && (pd.state === 'free' || pd.state === 'launch')) shoot('podshot', pd.x * SHIP_SCALE, -pd.y * SHIP_SCALE, 6, 0);
     play.holdT = 0;
   }
   if (input.held('fire')) {
     play.holdT++;
     if (play.holdT > CHARGE_DELAY) play.charge = Math.min(1, play.charge + CHARGE_RATE);
   } else {
-    if (play.charge >= BEAM_MIN_CHARGE) {
-      const L = beamLevel(play.charge);
-      models.ship.fire(1 + L * 0.4);
-      const p = muzzleWorld();
-      p.x += 10 + L * 3;
-      spawnShot(p, { mat: beamMat, size: [10 + L * 8, 2 + L * 1.6, 2 + L * 1.6], speed: 200, life: 1.4, grow: true });
-    }
+    if (play.charge >= BEAM_MIN_CHARGE) fireBeam(beamLevel(play.charge));
     play.charge = 0;
     play.holdT = 0;
   }
+  sim.player.charge = play.charge;
   if (input.pressed('pod')) togglePod();
   stepPod();
 }
@@ -241,12 +265,6 @@ function applyPlay() {
   const pd = play.pod;
   models.pod.setGrip(pd.state === 'front' ? -1 : 1);
   models.pod.group.position.set(pd.x, pd.y, 0);
-  chargeMesh.visible = play.charge > 0;
-  if (play.charge > 0) {
-    const k = 0.4 + play.charge * 1.6;
-    chargeMesh.scale.setScalar(k);
-    chargeMesh.material.opacity = 0.5 + 0.5 * play.charge;
-  }
 }
 
 // --- scripted sequences -----------------------------------------------------
@@ -255,7 +273,7 @@ const CAPTIONS = {
   idle: '',
   play: 'Arrows / WASD fly, Z or space fires (hold to charge), X launches and recalls the pod',
   fire: 'Tap fire: muzzle flash and recoil',
-  beam: 'Hold fire, then release: charged beam',
+  beam: 'Hold fire, then release: the charged beam at each level, 1 to 5',
   arrive: 'The pod flies in from the left after the first crystal',
   dock: 'The pod docks on the nose',
   dockback: 'The pod docks at the tail',
@@ -268,6 +286,7 @@ function setDemo(mode) {
   try { sessionStorage.setItem('preview-demo', mode); } catch { /* private mode */ }
   demo.t = 0;
   demo.next = 0;
+  Object.assign(demo, { level: 1, hold: 0, full: 0, wait: 20 });
   Object.assign(hits, { shield: SHIELD_MAX, angle: 0, age: 99 });
   clearShots();
   document.getElementById('caption').textContent = CAPTIONS[mode] || '';
@@ -279,10 +298,7 @@ function setDemo(mode) {
   models.pod.group.rotation.set(...basePose.pod, 0);
   boundsBox.visible = mode === 'play';
   if (mode === 'play') { resetPlay(); autoFrame = true; }
-  else {
-    models.ship.group.position.set(0, 0, 0);
-    chargeMesh.visible = false;
-  }
+  else models.ship.group.position.set(0, 0, 0);
 }
 
 const easeOut = (k) => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), 3);
@@ -298,17 +314,7 @@ function runDemo(dt) {
     case 'fire':
       if (t >= demo.next) {
         demo.next = t + 0.22;
-        ship.fire(1);
-        spawnShot(muzzleWorld());
-      }
-      break;
-    case 'beam':
-      if (t >= demo.next) {
-        demo.next = t + 1.8;
-        ship.fire(3.4);
-        const p = muzzleWorld();
-        p.x += 18;
-        spawnShot(p, { mat: beamMat, size: [34, 5, 5], speed: 200, life: 1.4, grow: true });
+        fireShot();
       }
       break;
     case 'arrive': {
@@ -347,6 +353,23 @@ function runDemo(dt) {
       }
       break;
   }
+}
+
+// Holds fire until the charge reaches each beam level in turn and releases.
+// It fires the level it was aiming for rather than beamLevel(charge): summing
+// CHARGE_RATE drifts just past each level's threshold. Full charge is held a
+// moment so the orb's gold flash shows.
+function stepBeamDemo() {
+  const p = sim.player;
+  if (demo.wait > 0) { demo.wait--; return; }
+  if (++demo.hold > CHARGE_DELAY) p.charge = Math.min(1, p.charge + CHARGE_RATE);
+  if (p.charge < demo.level / 5 - 1e-6) return;
+  if (demo.level === 5 && ++demo.full < 50) return;
+  fireBeam(demo.level);
+  p.charge = 0;
+  demo.hold = demo.full = 0;
+  demo.wait = 40;
+  demo.level = demo.level % 5 + 1;
 }
 
 // --- controls ---------------------------------------------------------------
@@ -407,7 +430,7 @@ for (const b of document.querySelectorAll('[data-view]')) {
   });
 }
 $('shot').addEventListener('click', () => {
-  renderer.render(scene, camera);
+  draw();
   const a = document.createElement('a');
   a.download = `${current}-${demo.mode}.png`;
   a.href = view.toDataURL('image/png');
@@ -428,6 +451,16 @@ try { startMode = sessionStorage.getItem('preview-demo') || 'idle'; } catch { /*
 setDemo(startMode);
 
 // --- loop -------------------------------------------------------------------
+// The scene, then the effects over it, as the game's last pass.
+renderer.info.autoReset = false;
+function draw() {
+  renderer.info.reset();
+  renderer.render(scene, camera);
+  renderer.autoClear = false;
+  renderer.render(top, camera);
+  renderer.autoClear = true;
+}
+
 const hud = document.getElementById('hud');
 let last = performance.now(), fps = 60, t = 0, acc = 0;
 const STEP = 1 / 60;
@@ -449,10 +482,15 @@ function frame(now) {
 
   if (!state.pause) {
     t += dt;
+    acc += dt;
+    let steps = 0;
+    while (acc >= STEP && steps++ < 5) {
+      if (playing) stepPlay();
+      else if (demo.mode === 'beam') stepBeamDemo();
+      stepShots();
+      acc -= STEP;
+    }
     if (playing) {
-      acc += dt;
-      let steps = 0;
-      while (acc >= STEP && steps++ < 5) { stepPlay(); acc -= STEP; }
       applyPlay();
       models.ship.update(dt, { bank: -play.tilt, dip: play.turn, throttle: state.throttle });
     } else {
@@ -463,8 +501,8 @@ function frame(now) {
     }
     models.pod.update(dt, { charge: playing ? play.charge : 0 });
     if (ENEMIES.includes(current)) models[current].update(dt);
-    stepShots(dt);
   }
+  effects.update(sim, 0);
   shield.group.visible = demo.mode === 'shield';
   if (demo.mode === 'shield' && !state.pause) {
     shield.update(dt, { strength: hits.shield / SHIELD_MAX, hitAngle: hits.angle, hitAge: hits.age });
@@ -478,14 +516,14 @@ function frame(now) {
   }
   if (playing && autoFrame) fitPlayArea();
   placeCamera();
-  renderer.render(scene, camera);
+  draw();
 
   const info = renderer.info.render;
   hud.textContent = playing
     ? `fly  charge ${(play.charge * 100).toFixed(0)}%  pod ${play.pod.state}  ${fps.toFixed(0)} fps`
-    : `${current}  ${demo.mode}${demo.mode === 'shield' ? `  shield ${hits.shield}%` : ''}  ${fps.toFixed(0)} fps  ${info.triangles} tris  ${info.calls} calls`;
+    : `${current}  ${demo.mode}${demo.mode === 'shield' ? `  shield ${hits.shield}%` : ''}${demo.mode === 'beam' ? `  charge ${(sim.player.charge * 100).toFixed(0)}%` : ''}  ${fps.toFixed(0)} fps  ${info.triangles} tris  ${info.calls} calls`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-window.__preview = { scene, camera, cam, models, shield, hits, state, renderer, demo, setDemo, play, input };
+window.__preview = { scene, camera, cam, models, shield, hits, state, renderer, demo, setDemo, play, input, effects, sim };

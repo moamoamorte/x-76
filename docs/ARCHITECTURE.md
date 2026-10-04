@@ -50,7 +50,7 @@ src/            game + harness modules
 | `src/models/effects.js` | 540 | Particles, bullets, beam and charge orb: instanced shape batches and trail ribbons, refilled from game state each frame |
 | `src/models/geom.js` | 54 | Triangle-by-triangle geometry builder with vertex colours, shared by the two above |
 | `src/models/materials.js` | 128 | Toon ramp, ink-outline shader, merging static parts, shared palette |
-| `src/preview.js` | 491 | Harness: orbit, sequences, fly mode, every model including enemies, bits and items |
+| `src/preview.js` | 529 | Harness: orbit, sequences, fly mode, every model including enemies, bits and items; shots through the game's effects layer |
 | `src/livereload.js` | 34 | Polls `/__mtime`, reloads on change |
 
 ## Game loop
@@ -154,6 +154,7 @@ Everything is synthesised at runtime (`audio.js`): oscillators and filtered nois
 
 - **Fly it** — a sandbox using the game's own `Input` class and the game's per-frame constants imported from `tuning.js` (speed, banking, charge timing, beam levels, pod state machine), so handling matches the game. Conversion: preview world units = game pixels ÷ 0.78.
 - **Sequences** — firing, charged beam, pod fly-in, pod docking front/rear. Each loops and can be replayed.
+- Shots, the beam (with its release ring), the charge orb and its particles are drawn by the game's `models/effects.js` in a pass after the scene, fed from pooled `PBullet`s, an `FX` and a stand-in player, all in game pixels; the layer's group is scaled to preview units. They move at game speed, so zoom out to follow them. The beam sequence charges to each level in turn, 1 to 5.
 - The model list includes every enemy, each driven by a small stand-in for its game state (a `demo` in its spec) and flashing as if hit every few seconds.
 - Orbit/zoom, preset camera angles, outline/wireframe/grid toggles, light angle, backgrounds, PNG export.
 - The active sequence is remembered in `sessionStorage` so a live reload drops you back in place.
