@@ -63,7 +63,15 @@ const STROKE = 0.9;   // in font pixels; a touch under 1 so it reads finer than 
 const DOT = 1.5;
 const PAD = 1;        // square caps and miters poke slightly outside the 5x7 box
 
+// Rendered strings, keyed level by level (size, colour, shadow, then text) so
+// that a lookup builds no key string: the HUD draws its text every frame.
 const cache = new Map();
+let cached = 0;
+const level = (map, key) => {
+  let m = map.get(key);
+  if (!m) map.set(key, (m = new Map()));
+  return m;
+};
 
 // k = device pixels per font pixel.
 function renderText(str, color, shadow, k) {
@@ -105,16 +113,19 @@ function renderText(str, color, shadow, k) {
   return cv;
 }
 
+const DEFAULTS = Object.freeze({});
+
 // Draw text at (x, y). align: 'left' | 'center' | 'right'. scale: integer size multiplier.
-export function drawText(ctx, str, x, y, color = '#fff', { align = 'left', scale = 1, shadow = '#000' } = {}) {
+export function drawText(ctx, str, x, y, color = '#fff', { align = 'left', scale = 1, shadow = '#000' } = DEFAULTS) {
   str = String(str).toUpperCase();
   const k = view.s * scale;
-  const key = str + '|' + color + '|' + shadow + '|' + k;
-  let cv = cache.get(key);
+  if (cached > 400) { cache.clear(); cached = 0; }
+  const texts = level(level(level(cache, k), color), shadow);
+  let cv = texts.get(str);
   if (!cv) {
     cv = renderText(str, color, shadow, k);
-    if (cache.size > 400) cache.clear();
-    cache.set(key, cv);
+    texts.set(str, cv);
+    cached++;
   }
   const w = cv.lw * scale;
   let dx = x;
