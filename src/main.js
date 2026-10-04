@@ -1,5 +1,5 @@
 // Game bootstrap, main loop, state machine, spawning and collision.
-import { W, H, HUD_H, SCREEN_H, rand, clamp, angleTo, dist2 } from './util.js';
+import { W, H, HUD_H, SCREEN_H, TAU, rand, clamp, angleTo, dist2 } from './util.js';
 import { Input } from './input.js';
 import { Sound } from './audio.js';
 import { drawText } from './font.js';
@@ -658,17 +658,14 @@ class Game {
     ctx.rect(0, 0, W, H);
     ctx.clip();
     ctx.translate(shake.x, shake.y);
-    this.boss?.draw(ctx, camD);
-    for (let i = 0; i < this.enemies.length; i++) {
-      const e = this.enemies[i];
-      if (e !== this.boss) e.draw(ctx, camD);
-    }
+    this.boss?.draw(ctx, camD);   // every other enemy is drawn by the 3D layer
     for (let i = 0; i < this.items.length; i++) this.items[i].draw(ctx, camD);
     for (let i = 0; i < this.pbullets.length; i++) this.pbullets[i].draw(ctx, camD);
     for (let i = 0; i < this.bits.length; i++) this.bits[i].draw(ctx, camD);
     if (this.state !== 'clear' || this.player.x - cam < W + 30) this.player.drawCharge(ctx, camD);
     for (let i = 0; i < this.ebullets.length; i++) this.ebullets[i].draw(ctx, camD);
     this.fx.draw(ctx, cam);
+    if (this.showHitboxes) this.drawHitboxes(camD);
     for (let i = 0; i < this.popups.length; i++) {
       const pu = this.popups[i];
       drawText(ctx, pu.text, pu.x - cam, pu.y, pu.color, CENTER);
@@ -681,6 +678,23 @@ class Game {
 
     this.drawHUD();
     this.drawOverlays();
+  }
+
+  // Debug overlay, game.showHitboxes = true: the circles collide() tests for
+  // every enemy (armoured ones grey) and the player, to check models against.
+  drawHitboxes(cam) {
+    ctx.lineWidth = 1 / view.s;
+    const ring = (c, color) => {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.arc(snap(c.x) - cam, snap(c.y), c.r, 0, TAU);
+      ctx.stroke();
+    };
+    for (const e of this.enemies) {
+      if (!e.active) continue;
+      for (const c of e.parts || e.solo) ring(c, c.armored ? '#9ab' : '#3f8');
+    }
+    if (!this.player.dead) ring(this.player, '#4cf');
   }
 
   drawHUD() {
