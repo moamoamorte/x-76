@@ -14,9 +14,9 @@ src/            game + harness modules
 
 | File | Lines | Contents |
 | --- | --- | --- |
-| `src/main.js` | 856 | Game loop, state machine, spawning, collision, HUD, overlays, debug warp, "WebGL required" screen |
+| `src/main.js` | 944 | Game loop, state machine, spawning, collision, HUD, overlays, debug warp, "WebGL required" screen |
 | `src/stages.js` | 9 | Stage registry: id, name, level module, boss class |
-| `src/player.js` | 529 | Player, pod, bits, every player projectile |
+| `src/player.js` | 567 | Player, pod, bits, every player projectile |
 | `src/tuning.js` | 47 | Handling constants shared by the game and the preview sandbox |
 | `src/enemies.js` | 624 | Enemy base + 8 enemy types, enemy bullets |
 | `src/boss.js` | 406 | Stage 1 boss ("Oculus Bloom") |
@@ -24,23 +24,23 @@ src/            game + harness modules
 | `src/terrain.js` | 79 | Tile collision grid and depth map |
 | `src/background.js` | 97 | Starfield and nebula (2D, behind everything) |
 | `src/audio.js` | 333 | Synthesised sound effects + music sequencer |
-| `src/fx.js` | 125 | Particles, explosions, screen shake |
-| `src/items.js` | 85 | Power-ups |
-| `src/font.js` | 125 | Angular stroke font on a 5x7 grid, with a render cache |
+| `src/fx.js` | 167 | Particles, explosions, screen shake |
+| `src/items.js` | 133 | Power-ups |
+| `src/font.js` | 135 | Angular stroke font on a 5x7 grid, with a render cache |
 | `src/input.js` | 83 | Keyboard + gamepad, edge detection |
 | `src/util.js` | 48 | Constants and maths helpers |
 | `src/pool.js` | 39 | Object pools and in-place, order-keeping list compaction |
 | `src/smoke.js` | 105 | `?smoke=1`: scripted headless run for `tools/smoke.py` |
-| `src/bench.js` | 79 | `?bench=1`: allocation benchmark for `tools/bench.py` |
+| `src/bench.js` | 83 | `?bench=1`: allocation benchmark for `tools/bench.py` |
 | `src/view.js` | 30 | Display scale (logical → device pixels), `snap()`, scaled offscreen canvases |
 | `src/render3d.js` | 249 | 3D layer: perspective camera; draws terrain, then ship, pod and shield |
-| `src/models/ship.js` | 177 | Procedural ship model |
-| `src/models/pod.js` | 146 | Procedural pod model |
+| `src/models/ship.js` | 188 | Procedural ship model |
+| `src/models/pod.js` | 152 | Procedural pod model |
 | `src/models/shield.js` | 91 | Faceted shield bubble with an impact-ripple shader |
 | `src/models/terrain3d.js` | 214 | Stage terrain built from the tile grid: chamfered blocks, decals, ink lines |
 | `src/models/backdrop3d.js` | 173 | Station interior and boss chamber walls, set back in depth |
 | `src/models/geom.js` | 54 | Triangle-by-triangle geometry builder with vertex colours, shared by the two above |
-| `src/models/materials.js` | 73 | Toon ramp, ink-outline shader, shared palette |
+| `src/models/materials.js` | 128 | Toon ramp, ink-outline shader, merging static parts, shared palette |
 | `src/preview.js` | 445 | Harness: orbit, sequences, fly mode |
 | `src/livereload.js` | 34 | Polls `/__mtime`, reloads on change |
 
@@ -48,7 +48,7 @@ src/            game + harness modules
 
 `main.js` runs a fixed 60 Hz accumulator: `update()` may run several times per animation frame, `draw()` once. A thrown error is caught, logged and the loop continues, so one bad frame cannot freeze the game.
 
-**Allocation.** Bullets and particles are pooled (`pool.js`): `game.shoot()`, `game.enemyShot()` and `fx.emit()` take a recycled object and reset it through `init()`, and every list is compacted in place at the end of a step, handing the dead back to their pools while keeping order. `PBullet.init()` resets every field any kind uses, so a recycled bullet can't inherit another kind's state; kind-specific values are set after it. Particles are one class with one field layout. `game.poolStats()` reports high-water marks, which plateau within a few minutes of play. The 3D layer builds its objects up front (models at start-up, terrain and backdrops per stage) and creates none per frame; `tools/smoke.py` fails if its scene graph changes size during play. `python3 tools/bench.py` measures heap allocation per frame (simulation and drawing apart) and GC count; compare runs interleaved, because its absolute numbers drift between sessions.
+**Allocation.** Bullets and particles are pooled (`pool.js`): `game.shoot()`, `game.enemyShot()` and `fx.emit()` take a recycled object and reset it through `init()`, and every list is compacted in place at the end of a step, handing the dead back to their pools while keeping order. `PBullet.init()` resets every field any kind uses, so a recycled bullet can't inherit another kind's state; kind-specific values are set after it. Particles are one class with one field layout. `game.poolStats()` reports high-water marks, which plateau within a few minutes of play. The 3D layer builds its objects up front (models at start-up, terrain and backdrops per stage) and creates none per frame; `tools/smoke.py` fails if its scene graph changes size during play. Every draw call still costs a few hundred bytes of garbage inside Three's uniform upload, so models keep draw calls few: `mergeParts()` bakes each rigid group's parts into one mesh per material plus one outline shell (DECISIONS §24). Hot per-frame loops (collision, particles, list updates and draws) are indexed rather than `for...of`, and `collide()` does its circle arithmetic in place instead of passing doubles to helpers; both allocate whenever V8 runs the code unoptimised, which `collide()` does for a while each time a new enemy type deoptimises it. Drawing state that is the same every frame (gradients, colour strings, option objects, HUD strings) is made once. `python3 tools/bench.py` measures heap allocation per frame (simulation and drawing apart) and GC count; compare runs interleaved, because its absolute numbers drift between sessions.
 
 States: `title` → `play` → (`gameover` | `clear`) → `title`. From `clear` the game moves on to the next entry in `STAGES` if there is one, carrying score, lives and power-ups. Pause is a flag inside `play`. The tab losing visibility auto-pauses.
 
@@ -124,6 +124,7 @@ Built in code, no asset files. Conventions:
 - **Angular only.** Prisms use 4-8 radial segments; plates are extruded 2D outlines with a bevel; the pod's core is an octahedron. Nothing reads as a smooth curve.
 - **Cel shading**: `MeshToonMaterial` with a 3-step gradient ramp.
 - **Ink outlines**: an inverted-hull shell per mesh — the same geometry with `side: BackSide`, pushed along its normals by a shader. `part(geometry, material, {outline})` builds the mesh + shell pair; `setOutlines(false)` hides every shell.
+- **Merged parts**: once built, `mergeParts(group)` bakes every part under a group that moves as one (the ship's `bank`, the pod's spinning plates, each claw hinge) into one mesh per material and one outline shell, pushed out by each part's own thickness. A part that needs to move on its own must sit in its own group and be merged separately, or not at all.
 - Ship: four swept arms in an X, hull tapering to a drooped nose, faceted canopy on the nose, muzzle flash and recoil on `fire(power)`.
 - Pod: faceted core inside three armour plates on a faceted ring, three claws on a rig that flips to face the hull it grips. `clamp()` snaps the claws shut with a jolt and flash; `release()` opens them.
 

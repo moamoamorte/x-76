@@ -162,8 +162,7 @@ export class PBullet {
         break;
       case 'podshot':
       case 'yshot': {
-        const c = this.kind === 'yshot' ? '255,220,60' : '255,120,50';
-        ctx.fillStyle = `rgba(${c},0.6)`;
+        ctx.fillStyle = this.kind === 'yshot' ? 'rgba(255,220,60,0.6)' : 'rgba(255,120,50,0.6)';
         ctx.beginPath();
         ctx.arc(x, y, this.r + 1.5, 0, TAU);
         ctx.fill();

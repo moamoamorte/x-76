@@ -47,15 +47,19 @@ export function runBench(game) {
     }
   };
 
+  // Each warp draws once before measuring: the first draw of a stage builds its
+  // 3D terrain and backdrops, a one-off that isn't per-frame allocation.
   game.warp({ cp: 3, god: true, power: 'pod:blue:3,speed:2,missile,bits:2' });
   game.banner = null;
   game.player.entering = false;
+  game.draw();
   last = heap();
   play(1800);
 
   game.warp({ boss: true, god: true, power: 'pod:red:3,speed:2,missile,bits:2' });
   game.banner = null;
   game.player.entering = false;
+  game.draw();
   last = heap();
   play(900);
   if (game.boss) game.boss.hp = 1;   // kill it, for the death explosions

@@ -3,7 +3,7 @@
 // swept arms forming a compact X when seen from behind.
 // +X is forward, +Y up, +Z out of the screen.
 import * as THREE from '../../vendor/three.module.js';
-import { part, toon } from './materials.js';
+import { part, toon, mergeParts } from './materials.js';
 
 const OUT = 0.5;
 
@@ -83,6 +83,7 @@ export function createShip({ outline = OUT } = {}) {
 
   // --- four short arms in a compact X --------------------------------------
   const flames = [];
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x9fe8ff, toneMapped: false });
   const armAngles = [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4];
   for (const a of armAngles) {
     const arm = new THREE.Group();
@@ -96,13 +97,7 @@ export function createShip({ outline = OUT } = {}) {
     put(arm, prism(2.4, 1.9, 2.2, 6), mMetal, [-12.2, 0, 9.6]);
     put(arm, prism(1.3, 2.0, 3, 6), mDark, [-0.9, 0, 9.6], [0, 0, 0], [1, 1, 1], 0.26);
 
-    const ring = new THREE.Mesh(
-      new THREE.CircleGeometry(1.9, 6),
-      new THREE.MeshBasicMaterial({ color: 0x9fe8ff, toneMapped: false })
-    );
-    ring.position.set(-13.3, 0, 9.6);
-    ring.rotation.y = -Math.PI / 2;
-    arm.add(ring);
+    put(arm, new THREE.CircleGeometry(1.9, 6), ringMat, [-13.3, 0, 9.6], [0, -Math.PI / 2, 0], [1, 1, 1], 0);   // exhaust ring
 
     const flameGeo = new THREE.ConeGeometry(1.6, 10, 4, 1, true);
     flameGeo.rotateZ(Math.PI / 2);
@@ -117,7 +112,7 @@ export function createShip({ outline = OUT } = {}) {
   // --- greebles ------------------------------------------------------------
   add(box(3.4, 0.6, 2.6), mPanel, [-2, 4.2, 1.8], [0, 0, 0], [1, 1, 1], 0.16);
   add(box(2.6, 0.6, 2.0), mPanel, [-7, 4.0, -1.6], [0, 0, 0], [1, 1, 1], 0.16);
-  for (const s of [1, -1]) add(box(2.0, 1.4, 0.7), toon(C.shade), [0, 0.2, s * 4.4], [0, 0, 0], [1, 1, 1], 0.16);
+  for (const s of [1, -1]) add(box(2.0, 1.4, 0.7), mShade, [0, 0.2, s * 4.4], [0, 0, 0], [1, 1, 1], 0.16);
   // --- muzzle flash (hidden until the ship fires) ---------------------------
   const flashGeo = new THREE.ConeGeometry(2.4, 6, 4, 1, true);
   flashGeo.rotateZ(-Math.PI / 2);
@@ -128,6 +123,9 @@ export function createShip({ outline = OUT } = {}) {
   flash.position.set(13.5, 0, 0);
   flash.visible = false;
   nose.add(flash);
+
+  // Nothing under bank moves on its own, so its parts draw as one mesh per material.
+  mergeParts(bank);
 
   // Display pose: mostly side-on, turned just enough to show the top and flank.
   root.rotation.set(0.2, -0.3, 0);

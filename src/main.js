@@ -1,5 +1,5 @@
 // Game bootstrap, main loop, state machine, spawning and collision.
-import { W, H, HUD_H, SCREEN_H, rand, clamp, circleHit, rectCircleHit, angleTo, dist2 } from './util.js';
+import { W, H, HUD_H, SCREEN_H, rand, clamp, angleTo, dist2 } from './util.js';
 import { Input } from './input.js';
 import { Sound } from './audio.js';
 import { drawText } from './font.js';
@@ -40,11 +40,34 @@ function saveHi(v) {
   try { localStorage.setItem(HI_KEY, String(v)); } catch { /* storage unavailable */ }
 }
 const pad = (n, l = 7) => String(Math.floor(n)).padStart(l, '0');
+// HUD strings drawn every frame, rebuilt only when their number changes.
+const counter = (prefix) => {
+  let n = NaN, text = '';
+  return (v) => (v === n ? text : (text = prefix + pad((n = v))));
+};
+const scoreText = counter('1P '), hiText = counter('HI ');
+const CENTER = { align: 'center' };
 // Module-level so the per-step compaction doesn't allocate closures.
 const live = (o) => !o.dead;
 const showing = (p) => p.t > 0;
-const hitTest = (b, part) =>
-  b.hw ? rectCircleHit(b.x, b.y, b.hw, b.hh, part.x, part.y, part.r) : circleHit(b.x, b.y, b.r, part.x, part.y, part.r);
+// collide() does circleHit's and rectCircleHit's arithmetic in place, or through
+// these helpers that take objects, because a call that passes doubles boxes
+// each one whenever V8 hasn't inlined it. collide() is deoptimised each time a
+// new enemy type turns up and runs in the lower tiers for a while each time,
+// with its loops over every bullet, enemy part and player. Indexed loops for
+// the same reason: for...of allocates there too.
+const touching = (a, b) => {
+  const dx = a.x - b.x, dy = a.y - b.y, r = a.r + b.r;
+  return dx * dx + dy * dy < r * r;
+};
+const hitTest = (b, part) => {
+  if (!b.hw) return touching(b, part);
+  const cx = part.x, cy = part.y, cr = part.r;
+  const x0 = b.x - b.hw, x1 = b.x + b.hw, y0 = b.y - b.hh, y1 = b.y + b.hh;
+  const dx = (cx < x0 ? x0 : cx > x1 ? x1 : cx) - cx;
+  const dy = (cy < y0 ? y0 : cy > y1 ? y1 : cy) - cy;
+  return dx * dx + dy * dy < cr * cr;
+};
 
 // ---- HUD drawing helpers ----------------------------------------------------
 // Thinnest line that still covers a whole device pixel.
@@ -64,6 +87,15 @@ function meterWell(x, y, w, h, color) {
   ctx.lineWidth = t;
   ctx.stroke();
 }
+// One slanted shield-meter cell, w wide, in the HUD row at y.
+function shieldCell(cx, y, w) {
+  ctx.beginPath();
+  ctx.moveTo(cx + 1, y + 5.5); ctx.lineTo(cx + w + 0.6, y + 5.5);
+  ctx.lineTo(cx + w - 0.4, y + 10.5); ctx.lineTo(cx, y + 10.5);
+  ctx.fill();
+}
+// The beam meter's fill: fixed HUD coordinates, so made once.
+let beamFill = null;
 
 class Game {
   constructor(r3d) {
@@ -440,14 +472,17 @@ class Game {
     this.bg.update();
     this.player.update();
     this.pod?.update();
-    for (const b of this.bits) b.update();
-    for (const b of this.pbullets) b.update(this);
+    for (let i = 0; i < this.bits.length; i++) this.bits[i].update();
+    for (let i = 0; i < this.pbullets.length; i++) this.pbullets[i].update(this);
     for (let i = 0; i < this.enemies.length; i++) this.enemies[i].update();
-    for (const b of this.ebullets) b.update(this);
-    for (const it of this.items) it.update();
+    for (let i = 0; i < this.ebullets.length; i++) this.ebullets[i].update(this);
+    for (let i = 0; i < this.items.length; i++) this.items[i].update();
     this.collide();
     this.fx.update(this.scrollDelta);
-    for (const pu of this.popups) { pu.t--; pu.y -= 0.4; pu.x += this.scrollDelta; }
+    for (let i = 0; i < this.popups.length; i++) {
+      const pu = this.popups[i];
+      pu.t--; pu.y -= 0.4; pu.x += this.scrollDelta;
+    }
 
     compact(this.pbullets, live, this.releasePB);
     compact(this.ebullets, live, this.releaseEB);
@@ -475,14 +510,18 @@ class Game {
 
   collide() {
     const p = this.player;
+    const pbullets = this.pbullets, ebullets = this.ebullets, enemies = this.enemies;
 
     // Player projectiles vs enemies
-    for (const b of this.pbullets) {
+    for (let i = 0; i < pbullets.length; i++) {
+      const b = pbullets[i];
       if (b.dead) continue;
-      for (const e of this.enemies) {
+      for (let j = 0; j < enemies.length; j++) {
+        const e = enemies[j];
         if (e.dead || !e.active) continue;
         const parts = e.parts || e.solo;
-        for (const part of parts) {
+        for (let k = 0; k < parts.length; k++) {
+          const part = parts[k];
           if (!hitTest(b, part)) continue;
           this.bulletHit(b, e, part);
           if (b.dead || e.dead || !e.active) break;
@@ -493,31 +532,42 @@ class Game {
 
     // Pod and bits: ram enemies, soak bullets
     if (this.pod && this.pod.state !== 'arrive') this.shieldHits(this.pod, 0.34);
-    for (const bit of this.bits) this.shieldHits(bit, 0.2);
+    for (let i = 0; i < this.bits.length; i++) this.shieldHits(this.bits[i], 0.2);
 
     if (p.dead || p.entering) return;
 
     // Items
-    for (const it of this.items) {
-      if (!it.dead && circleHit(p.x, p.y, 12, it.x, it.y, it.r)) {
+    for (let i = 0; i < this.items.length; i++) {
+      const it = this.items[i];
+      if (it.dead) continue;
+      const dx = p.x - it.x, dy = p.y - it.y, r = 12 + it.r;
+      if (dx * dx + dy * dy < r * r) {
         it.dead = true;
         this.collect(it);
       }
     }
 
     if (p.inv > 0) return;
-    for (const b of this.ebullets) {
-      if (!b.dead && circleHit(p.hx, p.hy, 2.5, b.x, b.y, b.r)) {
+    const hx = p.hx, hy = p.hy;
+    for (let i = 0; i < ebullets.length; i++) {
+      const b = ebullets[i];
+      if (b.dead) continue;
+      const dx = hx - b.x, dy = hy - b.y, r = 2.5 + b.r;
+      if (dx * dx + dy * dy < r * r) {
         b.dead = true;
-        this.hitPlayer(b.big ? 'bigBullet' : 'bullet', angleTo(p.hx, p.hy, b.x, b.y));
+        this.hitPlayer(b.big ? 'bigBullet' : 'bullet', angleTo(hx, hy, b.x, b.y));
         return;
       }
     }
-    for (const e of this.enemies) {
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
       if (e.dead || (!e.active && e !== this.boss)) continue;
-      for (const part of e.parts || e.solo) {
-        if (circleHit(p.hx, p.hy, 4, part.x, part.y, part.r * 0.85)) {
-          this.hitPlayer(e === this.boss ? 'boss' : 'enemy', angleTo(p.hx, p.hy, part.x, part.y));
+      const parts = e.parts || e.solo;
+      for (let k = 0; k < parts.length; k++) {
+        const part = parts[k];
+        const dx = hx - part.x, dy = hy - part.y, r = 4 + part.r * 0.85;
+        if (dx * dx + dy * dy < r * r) {
+          this.hitPlayer(e === this.boss ? 'boss' : 'enemy', angleTo(hx, hy, part.x, part.y));
           return;
         }
       }
@@ -525,17 +575,22 @@ class Game {
   }
 
   shieldHits(s, dmg) {
-    for (const e of this.enemies) {
+    const enemies = this.enemies, ebullets = this.ebullets;
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
       if (e.dead || !e.active) continue;
-      for (const part of e.parts || e.solo) {
-        if (part.armored || !circleHit(s.x, s.y, s.r, part.x, part.y, part.r)) continue;
+      const parts = e.parts || e.solo;
+      for (let k = 0; k < parts.length; k++) {
+        const part = parts[k];
+        if (part.armored || !touching(s, part)) continue;
         e.hit(dmg, part);
         if (this.t % 6 === 0) this.fx.sparks(s.x, s.y, '#ffd080', 2, 2);
         break;
       }
     }
-    for (const b of this.ebullets) {
-      if (!b.dead && circleHit(s.x, s.y, s.r, b.x, b.y, b.r)) {
+    for (let i = 0; i < ebullets.length; i++) {
+      const b = ebullets[i];
+      if (!b.dead && touching(s, b)) {
         b.dead = true;
         this.fx.sparks(b.x, b.y, '#ffb070', 2, 1.5);
       }
@@ -604,14 +659,20 @@ class Game {
     ctx.clip();
     ctx.translate(shake.x, shake.y);
     this.boss?.draw(ctx, camD);
-    for (const e of this.enemies) if (e !== this.boss) e.draw(ctx, camD);
-    for (const it of this.items) it.draw(ctx, camD);
-    for (const b of this.pbullets) b.draw(ctx, camD);
-    for (const b of this.bits) b.draw(ctx, camD);
+    for (let i = 0; i < this.enemies.length; i++) {
+      const e = this.enemies[i];
+      if (e !== this.boss) e.draw(ctx, camD);
+    }
+    for (let i = 0; i < this.items.length; i++) this.items[i].draw(ctx, camD);
+    for (let i = 0; i < this.pbullets.length; i++) this.pbullets[i].draw(ctx, camD);
+    for (let i = 0; i < this.bits.length; i++) this.bits[i].draw(ctx, camD);
     if (this.state !== 'clear' || this.player.x - cam < W + 30) this.player.drawCharge(ctx, camD);
-    for (const b of this.ebullets) b.draw(ctx, camD);
+    for (let i = 0; i < this.ebullets.length; i++) this.ebullets[i].draw(ctx, camD);
     this.fx.draw(ctx, cam);
-    for (const pu of this.popups) drawText(ctx, pu.text, pu.x - cam, pu.y, pu.color, { align: 'center' });
+    for (let i = 0; i < this.popups.length; i++) {
+      const pu = this.popups[i];
+      drawText(ctx, pu.text, pu.x - cam, pu.y, pu.color, CENTER);
+    }
     if (this.fx.flash) {
       ctx.fillStyle = `rgba(255,255,255,${this.fx.flash / 24})`;
       ctx.fillRect(0, 0, W, H);
@@ -639,16 +700,18 @@ class Game {
     meterWell(bx, y + 4, bw, 8, '#2a4a9a');
     const c = this.player?.charge || 0;
     if (c > 0) {
-      const g = ctx.createLinearGradient(bx, 0, bx + bw, 0);
-      g.addColorStop(0, '#1a4aff');
-      g.addColorStop(0.7, '#6ad0ff');
-      g.addColorStop(1, '#ffffff');
-      ctx.fillStyle = c >= 1 && this.t % 8 < 4 ? '#fff' : g;
+      if (!beamFill) {
+        beamFill = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+        beamFill.addColorStop(0, '#1a4aff');
+        beamFill.addColorStop(0.7, '#6ad0ff');
+        beamFill.addColorStop(1, '#ffffff');
+      }
+      ctx.fillStyle = c >= 1 && this.t % 8 < 4 ? '#fff' : beamFill;
       ctx.fillRect(bx + 1, y + 5, (bw - 2) * c, 6);
     }
     this.drawShieldMeter(178, y);
-    drawText(ctx, '1P ' + pad(this.score), 246, y + 5, '#fff');
-    drawText(ctx, 'HI ' + pad(this.hi), 318, y + 5, '#ffd070');
+    drawText(ctx, scoreText(this.score), 246, y + 5, '#fff');
+    drawText(ctx, hiText(this.hi), 318, y + 5, '#ffd070');
   }
 
   // A shield glyph and ten 10% cells; the last cell fills partway.
@@ -670,20 +733,14 @@ class Game {
     const sx = x + 10, cells = 10, cw = 4;
     meterWell(sx, y + 4, cells * (cw + 1) + 1, 8, k <= 0.25 && blink ? '#c02a30' : '#1f6a66');
     // Slanted cells, each a parallelogram; the last one fills partway.
-    const cell = (cx, w) => {
-      ctx.beginPath();
-      ctx.moveTo(cx + 1, y + 5.5); ctx.lineTo(cx + w + 0.6, y + 5.5);
-      ctx.lineTo(cx + w - 0.4, y + 10.5); ctx.lineTo(cx, y + 10.5);
-      ctx.fill();
-    };
     for (let i = 0; i < cells; i++) {
       const cx = sx + 1 + i * (cw + 1);
       ctx.fillStyle = '#0c2222';
-      cell(cx, cw);
+      shieldCell(cx, y, cw);
       const fill = clamp(k * cells - i, 0, 1);
       if (fill <= 0) continue;
       ctx.fillStyle = col;
-      cell(cx, Math.max(1, cw * fill));
+      shieldCell(cx, y, Math.max(1, cw * fill));
     }
   }
 

@@ -82,8 +82,12 @@ export class FX {
     if (o) { o.tx = x; o.ty = y; }
   }
 
+  // Indexed loops: for...of allocates an iterator whenever V8 hasn't
+  // optimised the loop, and these run over hundreds of particles a frame.
   update(scrollDelta) {
-    for (const o of this.p) {
+    const p = this.p;
+    for (let i = 0; i < p.length; i++) {
+      const o = p[i];
       o.life--;
       o.x += scrollDelta;
       switch (o.k) {
@@ -115,8 +119,10 @@ export class FX {
   }
 
   draw(ctx, cam) {
+    const p = this.p;
     ctx.save();
-    for (const o of this.p) {
+    for (let i = 0; i < p.length; i++) {
+      const o = p[i];
       if (o.k !== 'smoke') continue;
       const t = o.life / o.max;
       ctx.globalAlpha = t * 0.35;
@@ -126,7 +132,8 @@ export class FX {
       ctx.fill();
     }
     ctx.globalCompositeOperation = 'lighter';
-    for (const o of this.p) {
+    for (let i = 0; i < p.length; i++) {
+      const o = p[i];
       const t = o.life / o.max;
       const x = o.x - cam;
       switch (o.k) {
