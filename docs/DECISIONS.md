@@ -201,3 +201,16 @@ Measured with `tools/bench.py`, four runs interleaved against `main` in one sess
 - Animation is derived from existing state rather than kept by the renderer: spin and walk phase from `t`, the Hopper's crouch from `ground` and `vy`, the Bulwark's legs from `walkT`. Nothing per enemy needs creating or freeing.
 - Enemies are now behind the ship (pass 2), where the 2D sprites were in front. Enemy bullets are still 2D and still draw over everything.
 - Anything inside terrain is hidden by it. That's right for a larva burrowing through a wall, but it also half-buries the four central-block turrets that spawn inside the block ([#66](https://github.com/moamoamorte/x-76/issues/66)); the 2D sprites used to draw over it.
+
+## 26. The boss draws over the terrain
+
+**Decision:** Oculus Bloom is a 3D model built with the enemy kit (§25), but drawn in the second pass with the ship rather than in the terrain's pass. Its 2D drawing, including the pre-rendered body canvas, is deleted.
+
+**Why:** [#8](https://github.com/moamoamorte/x-76/issues/8). The chamber's back wall is terrain from column 744, a block whose front face is at z = 0 from screen x 352 onward. The boss is drawn growing over it, and most of its wall (curling back to z −18 at the leading edge) would sink behind that face, leaving only the eye and tentacles. The 2D sprite simply drew on top, so the second pass keeps that. The ship and the boss now depth-test against each other, which only matters when they overlap, and that is a collision anyway.
+
+**Consequence:**
+- Larvae from the spore mouths stay in the terrain pass, so they emerge from under the boss.
+- Only one field was added to the game for the model: `launchT`, the frame larvae last launched, which makes the mouths gape. A seeded, scripted fight through to stage clear hashes the same game state every frame on this branch and on `main`.
+- The open iris has to read at a glance. Closed, eight petals meet over the eye in a shallow cone; open, they fold back toward the camera, the crater glows and the pupil widens. The wall sinks into a socket around the eye so nothing covers it.
+- The model vanishes at the death flash (`st` 150) instead of fading, because its materials are opaque; the flash covers the cut.
+- **One toon material per pass and per tint.** The first version shared one enemy material everywhere and drew about 8 KB a frame more than `main` on `tools/bench.py`. Chrome's sampling heap profiler (including garbage already collected) put over 30 KB of each boss-fight frame in Three's `getProgram`: `getParameters` and the program cache key. Three keys a material's program on the scene's fog and lights and on whether an instanced mesh has per-instance colours. The boss mixes tinted pieces (body, crater, iris) with untinted ones and draws in the fogless second pass, so the shared material changed program state many times a frame, and each change rebuilds the parameters. `solidMaterial(front, tint)` keeps a material per combination, so none ever changes. Boss-fight drawing fell from 46 to 11 KB a frame (9.5 on `main` with the 2D boss), and `tools/bench.py` (two runs of three, interleaved) is back level with `main`: 39.1–39.5 KB a frame against 39.3, with the same GC counts. The Porter's tinted canister had been paying a smaller share of this since #7.
