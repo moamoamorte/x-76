@@ -5,6 +5,7 @@ import { createShip } from './models/ship.js';
 import { createPod } from './models/pod.js';
 import { createShield } from './models/shield.js';
 import { createEnemyModel, SPECS } from './models/enemies/index.js';
+import { PICKUPS } from './models/pickups.js';
 import { Input } from './input.js';
 import {
   shipSpeed, TILT_EASE, TURN_EASE, CHARGE_DELAY, CHARGE_RATE, BEAM_MIN_CHARGE, beamLevel, DOCK, SHIP_SCALE, POD_SCALE,
@@ -35,10 +36,11 @@ grid.position.y = -18;
 scene.add(grid);
 
 const models = { ship: createShip(), pod: createPod({ color: 'red' }) };
-// Enemies are modelled in game pixels; scaled like the ship so sizes compare.
-const ENEMIES = Object.keys(SPECS);
+// Enemies, bits and items are modelled in game pixels; scaled like the ship
+// so sizes compare.
+const ENEMIES = [...Object.keys(SPECS), ...Object.keys(PICKUPS)];
 for (const k of ENEMIES) {
-  models[k] = createEnemyModel(k);
+  models[k] = createEnemyModel(k, SPECS[k] ? SPECS : PICKUPS);
   models[k].group.scale.setScalar(models[k].scale / SHIP_SCALE);
 }
 for (const m of Object.values(models)) scene.add(m.group);

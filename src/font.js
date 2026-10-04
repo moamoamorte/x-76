@@ -59,6 +59,9 @@ const parse = (src) => src ? src.split('|').map((part) => {
 const PARSED = {};
 for (const ch in GLYPHS) PARSED[ch] = parse(GLYPHS[ch]);
 
+// A glyph's strokes, [{ dot, pts }] on the 5x7 grid, for building it in 3D.
+export const glyph = (ch) => PARSED[ch] || PARSED['?'];
+
 const STROKE = 0.9;   // in font pixels; a touch under 1 so it reads finer than the old blocks
 const DOT = 1.5;
 const PAD = 1;        // square caps and miters poke slightly outside the 5x7 box
