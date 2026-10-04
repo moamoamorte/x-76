@@ -2,7 +2,7 @@
 // core sits inside slowly turning armour plates; three claws snap shut when it
 // clamps onto the hull.
 import * as THREE from '../../vendor/three.module.js';
-import { part, toon } from './materials.js';
+import { part, toon, mergeParts } from './materials.js';
 
 const LASER_COLOR = { red: 0xff5a2a, blue: 0x3ac8ff, yellow: 0xffd82a };
 
@@ -39,17 +39,18 @@ export function createPod({ outline = 0.32, color = 'red' } = {}) {
   body.add(halo);
 
   // --- armour plates around the core ---------------------------------------
-  const plateMats = [toon(C.hull), toon(C.light), toon(C.shade)];
+  const mLight = toon(C.light), mMetal = toon(C.metal), mDark = toon(C.dark);
+  const plateMats = [toon(C.hull), mLight, toon(C.shade)];
   for (let i = 0; i < 3; i++) {
     const arm = new THREE.Group();
     arm.rotation.x = (i * Math.PI * 2) / 3;
     spin.add(arm);
     put(arm, box(7.5, 1.3, 3.4), plateMats[i], [0, 5.2, 0]);
-    put(arm, box(2.6, 1.2, 3.0), toon(C.metal), [3.2, 4.2, 0], [0, 0, -0.6], 0.24);
-    put(arm, box(2.6, 1.2, 3.0), toon(C.metal), [-3.2, 4.2, 0], [0, 0, 0.6], 0.24);
+    put(arm, box(2.6, 1.2, 3.0), mMetal, [3.2, 4.2, 0], [0, 0, -0.6], 0.24);
+    put(arm, box(2.6, 1.2, 3.0), mMetal, [-3.2, 4.2, 0], [0, 0, 0.6], 0.24);
   }
   // Faceted ring tying the plates together.
-  const ring = part(new THREE.TorusGeometry(6.4, 0.6, 4, 10), toon(C.metal), { outline: outline * 0.7 });
+  const ring = part(new THREE.TorusGeometry(6.4, 0.6, 4, 10), mMetal, { outline: outline * 0.7 });
   ring.rotation.x = Math.PI / 2;
   spin.add(ring);
 
@@ -65,8 +66,8 @@ export function createPod({ outline = 0.32, color = 'red' } = {}) {
     const hinge = new THREE.Group();
     hinge.position.set(3.4, 2.6, 0);
     pivot.add(hinge);
-    put(hinge, box(6.4, 1.3, 1.6), toon(C.light), [2.8, 0, 0], [0, 0, 0], 0.22);
-    put(hinge, box(2.8, 1.2, 1.4), toon(C.dark), [6.2, -1.2, 0], [0, 0, -1.0], 0.2);
+    put(hinge, box(6.4, 1.3, 1.6), mLight, [2.8, 0, 0], [0, 0, 0], 0.22);
+    put(hinge, box(2.8, 1.2, 1.4), mDark, [6.2, -1.2, 0], [0, 0, -1.0], 0.2);
     claws.push(hinge);
   }
 
@@ -77,6 +78,11 @@ export function createPod({ outline = 0.32, color = 'red' } = {}) {
   const flash = new THREE.Mesh(new THREE.OctahedronGeometry(4.6, 0), flashMat);
   flash.visible = false;
   body.add(flash);
+
+  // The plates turn together and each claw on its own hinge, so each of
+  // those draws as one mesh per material.
+  mergeParts(spin);
+  for (const c of claws) mergeParts(c);
 
   root.rotation.set(0.2, -0.4, 0);
 
