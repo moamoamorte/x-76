@@ -19,7 +19,7 @@ import { LASER_HUE } from '../items.js';
 // Colours are written out as they are, in sRGB like the 2D canvas: the
 // shader has no colour-space conversion, so there's none to undo here.
 const RGB = new Map();
-function rgb(hex) {
+export function rgb(hex) {
   let c = RGB.get(hex);
   if (!c) {
     const n = parseInt(hex.slice(1), 16);
@@ -96,7 +96,7 @@ const polygon = (n, turn = 0) => Array.from({ length: n }, (_, i) => {
   return [Math.cos(a), Math.sin(a)];
 });
 
-const octagon = (rim) => new Shape().fan(polygon(8, Math.PI / 8), rim);
+export const octagon = (rim) => new Shape().fan(polygon(8, Math.PI / 8), rim);
 const diamond = () => new Shape().fan([[1, 0], [0, 1], [-1, 0], [0, -1]], 0.25);
 
 // A band around the unit circle, its width set per instance.
@@ -179,14 +179,16 @@ const FRAG = `
     #endif
   }`;
 
-function material(add, facet) {
+// depth: tested against what's already drawn (but never written), so a halo
+// set behind a model shows only around it.
+function material(add, facet, depth = false) {
   return new THREE.ShaderMaterial({
     uniforms: { uFacet: { value: facet } },
     vertexShader: VERT,
     fragmentShader: FRAG,
     defines: add ? { ADD: '' } : {},
     transparent: true,
-    depthTest: false,
+    depthTest: depth,
     depthWrite: false,
     blending: add ? THREE.CustomBlending : THREE.NormalBlending,
     blendSrc: THREE.OneFactor,
@@ -196,11 +198,12 @@ function material(add, facet) {
 
 // ---- batches ------------------------------------------------------------------
 // One shape, one blend mode, up to `cap` copies, drawn in `order`. put() takes
-// screen coordinates (y down, angles clockwise) and converts them.
-class Batch {
-  constructor(name, shape, { cap, add = true, facet = 0, order }) {
+// screen coordinates (y down, angles clockwise) and converts them, at depth z.
+export class Batch {
+  constructor(name, shape, { cap, add = true, facet = 0, order = 0, depth = false, z = 0 }) {
     this.name = name;
     this.cap = cap;
+    this.z = z;
     this.n = 0;
     this.warned = false;
     const g = shape.geometry();
@@ -215,7 +218,7 @@ class Batch {
     g.setAttribute('iCol', this.col);
     g.instanceCount = 0;
     this.geo = g;
-    this.mesh = new THREE.Mesh(g, material(add, facet));
+    this.mesh = new THREE.Mesh(g, material(add, facet, depth));
     this.mesh.frustumCulled = false;   // instances are placed in the shader; the bounds know nothing of them
     this.mesh.renderOrder = order;
     this.mesh.visible = false;
@@ -228,7 +231,7 @@ class Batch {
     }
     const i = this.n++ * 4;
     const P = this.pos.array, X = this.xf.array, C = this.col.array;
-    P[i] = x; P[i + 1] = -y; P[i + 2] = 0; P[i + 3] = roll;
+    P[i] = x; P[i + 1] = -y; P[i + 2] = this.z; P[i + 3] = roll;
     X[i] = -turn; X[i + 1] = len; X[i + 2] = wid; X[i + 3] = band;
     C[i] = c[0]; C[i + 1] = c[1]; C[i + 2] = c[2]; C[i + 3] = a;
   }

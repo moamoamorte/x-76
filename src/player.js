@@ -1,6 +1,5 @@
 // Player ship, the detachable pod, satellite bits, and all player projectiles.
-import { W, H, clamp, lerp, TAU, angleTo, turnToward } from './util.js';
-import { snap } from './view.js';
+import { W, H, clamp, lerp, angleTo, turnToward } from './util.js';
 import {
   shipSpeed, TILT_EASE, TURN_EASE, CHARGE_DELAY, CHARGE_RATE, BEAM_MIN_CHARGE, beamLevel, BEAM, DOCK,
   POD_LAUNCH_FRONT, POD_LAUNCH_BACK, POD_LAUNCH_DRAG, POD_LAUNCH_STOP, POD_FOLLOW, POD_RECALL_SPEED, POD_GRAB_DIST,
@@ -430,24 +429,5 @@ export class Bit {
   }
   fire() {
     this.g.shoot('bitshot', this.x + 6, this.y, 7, 0);
-  }
-  draw(ctx, cam) {
-    const x = snap(this.x) - cam, y = snap(this.y);
-    ctx.save();
-    ctx.translate(x, y);
-    const g = ctx.createRadialGradient(-1, -1, 0, 0, 0, 5);
-    g.addColorStop(0, '#ffe8ff');
-    g.addColorStop(0.5, '#c070ff');
-    g.addColorStop(1, '#4a1a7a');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, 4.5, 0, TAU);
-    ctx.fill();
-    ctx.strokeStyle = '#e0b0ff';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 7, 2.5, this.t * 0.05, 0, TAU);
-    ctx.stroke();
-    ctx.restore();
   }
 }
