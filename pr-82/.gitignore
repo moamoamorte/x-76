@@ -1,0 +1,32 @@
+# JetBrains IDEs (WebStorm, IntelliJ, PyCharm)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code (keep shared settings if added later)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python (serve.py)
+__pycache__/
+*.pyc
+
+# Node, in case tooling is added later
+node_modules/
+npm-debug.log*
+
+# Claude Code: personal settings stay local; launch.json is shared
+.claude/settings.local.json
