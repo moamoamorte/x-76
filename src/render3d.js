@@ -1,4 +1,4 @@
-// 3D layer: renders the terrain, enemies, player ship and pod as lit 3D models on a
+// 3D layer: renders the terrain, enemies, player ship, pod and effects in 3D on a
 // transparent canvas between the two 2D canvases (see index.html). Game logic
 // stays 2D and untouched.
 import * as THREE from '../vendor/three.module.js';
@@ -10,6 +10,7 @@ import { createShield } from './models/shield.js';
 import { createTerrain3D } from './models/terrain3d.js';
 import { createBackdrop3D } from './models/backdrop3d.js';
 import { createEnemyLayer } from './models/enemies/index.js';
+import { createEffects } from './models/effects.js';
 import { SHIP_SCALE, POD_SCALE, SHIELD_RADIUS, SHIELD_OFFSET, SHIELD_INV } from './tuning.js';
 
 // Camera distance from the play plane. Farther flattens the perspective: at
@@ -73,6 +74,13 @@ export class Render3D {
     this.enemies = createEnemyLayer();
     this.world.add(this.enemies.group);
     this.scene.add(this.enemies.front);
+    // Effects go over both, with no depth test: explosions show on the boss
+    // they burst from, and enemy bullets stay readable over the ship, as they
+    // were when the 2D canvas drew them. No lights or fog, so the materials'
+    // programs never change.
+    this.effects = createEffects();
+    this.top = new THREE.Scene();
+    this.top.add(this.effects.group);
     this.hideAll();
   }
 
@@ -108,6 +116,7 @@ export class Render3D {
     r.autoClear = false;
     r.clearDepth();
     r.render(this.scene, this.camera);
+    r.render(this.top, this.camera);
     r.autoClear = true;
   }
 
@@ -116,6 +125,7 @@ export class Render3D {
     this.pod.group.visible = false;
     this.shield.group.visible = false;
     this.enemies.front.visible = false;
+    this.effects.group.visible = false;
   }
 
   // HUD spare-ship icon: the ship model rendered once, supersampled, then
@@ -129,7 +139,7 @@ export class Render3D {
 
     const SS = 8;
     const s = this.ship.group;
-    const vis = [s.visible, this.pod.group.visible, this.shield.group.visible, this.enemies.front.visible];
+    const vis = [s.visible, this.pod.group.visible, this.shield.group.visible, this.enemies.front.visible, this.effects.group.visible];
     const pos = s.position.clone(), rot = s.rotation.clone(), scl = s.scale.clone();
     const bank = this.ship.bank;
     const bankRot = bank.rotation.clone(), bankPos = bank.position.clone();
@@ -169,7 +179,7 @@ export class Render3D {
     }
     this.icon = { key, canvas: src };
 
-    [s.visible, this.pod.group.visible, this.shield.group.visible, this.enemies.front.visible] = vis;
+    [s.visible, this.pod.group.visible, this.shield.group.visible, this.enemies.front.visible, this.effects.group.visible] = vis;
     s.position.copy(pos); s.rotation.copy(rot); s.scale.copy(scl);
     bank.rotation.copy(bankRot); bank.position.copy(bankPos);
     for (const [o, v] of flames) o.visible = v;
@@ -194,6 +204,7 @@ export class Render3D {
     });
     if (this.terrain) this.terrain.group.visible = this.backdrop.group.visible = false;
     this.enemies.visible = false;
+    this.effects.group.visible = false;
     this.aimCamera(0, 0);
     this.draw();
   }
@@ -209,6 +220,8 @@ export class Render3D {
     this.backdrop.update(camD, W);
     this.enemies.visible = true;
     this.enemies.update(game.enemies, camD);
+    this.effects.group.visible = true;
+    this.effects.update(game, cam);
     this.aimCamera(-shake.x, shake.y);
 
     // Respawn invulnerability blinks; the shorter window after a shield hit doesn't.

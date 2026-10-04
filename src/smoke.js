@@ -51,7 +51,7 @@ export function runSmoke(game) {
   const scenes = () => {
     const geos = new Set();
     let objects = 0;
-    for (const sc of [game.r3d.world, game.r3d.scene]) sc.traverse((o) => { objects++; if (o.geometry) geos.add(o.geometry); });
+    for (const sc of [game.r3d.world, game.r3d.scene, game.r3d.top]) sc.traverse((o) => { objects++; if (o.geometry) geos.add(o.geometry); });
     return { objects, geometries: geos.size };
   };
   let sceneBase = null;
