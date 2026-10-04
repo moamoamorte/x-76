@@ -9,15 +9,33 @@ import { toonRamp } from '../materials.js';
 // Toon shading over vertex colours, plus two extras the stock material lacks:
 // a per-vertex glow flag (lights and eyes ignore shading) and a per-instance
 // flash that whites out an enemy that was just hit.
-export const SOLID = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
-SOLID.onBeforeCompile = (sh) => {
-  sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute float glow;\nattribute float flash;\nvarying float vGlow;\nvarying float vFlash;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = glow;\nvFlash = flash;');
-  sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nvarying float vGlow;\nvarying float vFlash;')
-    .replace('#include <opaque_fragment>', 'outgoingLight = mix(mix(outgoingLight, vColor.rgb, vGlow), vec3(1.0), vFlash);\n#include <opaque_fragment>');
-};
+function solid() {
+  const m = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: toonRamp() });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float glow;\nattribute float flash;\nvarying float vGlow;\nvarying float vFlash;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = glow;\nvFlash = flash;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vGlow;\nvarying float vFlash;')
+      .replace('#include <opaque_fragment>', 'outgoingLight = mix(mix(outgoingLight, vColor.rgb, vGlow), vec3(1.0), vFlash);\n#include <opaque_fragment>');
+  };
+  return m;
+}
+
+// One material per pass and per tinted-or-not. Three keys a material's
+// program on the scene's fog and lights and on whether the mesh has
+// per-instance colours, so a material shared across those flips its program
+// at every switch, and each flip rebuilds the program's parameters and cache
+// key: in the boss fight that was over 30 KB of garbage a frame.
+const SOLIDS = new Map();
+export function solidMaterial(front = false, tint = false) {
+  const key = `${front}:${tint}`;
+  if (!SOLIDS.has(key)) SOLIDS.set(key, solid());
+  return SOLIDS.get(key);
+}
+export function setWireframe(on) {
+  for (const m of SOLIDS.values()) m.wireframe = on;
+}
 
 // Ink outline for instanced pieces. The shell geometry is baked already
 // pushed out along its normals, so all this does is place it.
@@ -64,7 +82,8 @@ export class Piece {
   }
 
   // o: { at, rot, scale, glow, outline, smooth }. Glowing parts get no ink by
-  // default. Facets are flat-shaded unless smooth is set.
+  // default. Facets are flat-shaded unless smooth is set. A null colour keeps
+  // the geometry's own vertex colours (the boss's mottled flesh).
   add(geo, color, o = {}) {
     this.parts.push({ geo, color, o });
     return this;
@@ -114,7 +133,8 @@ export class Piece {
         flat.computeVertexNormals();   // non-indexed, so one normal per face
         F = flat.attributes.normal;
       }
-      c.set(color);
+      const own = color === null ? g.attributes.color : null;
+      if (!own) c.set(color);
       const lit = o.glow ? 1 : 0;
       const push = o.outline ?? (o.glow ? 0 : this.outline);
       for (let i = 0; i < P.count; i++) {
@@ -122,6 +142,7 @@ export class Piece {
         n.fromBufferAttribute(F, i).applyNormalMatrix(nm);
         pos.push(p.x, p.y, p.z);
         nrm.push(n.x, n.y, n.z);
+        if (own) c.fromBufferAttribute(own, i);
         col.push(c.r, c.g, c.b);
         glow.push(lit);
         if (push > 0) {
@@ -148,13 +169,13 @@ export class Piece {
 
 // One piece's instanced meshes. Filled each frame between begin() and end().
 export class Instanced {
-  constructor(piece, cap) {
+  constructor(piece, cap, front = false) {
     const { solid, shell } = piece.bake();
     this.cap = cap;
     this.flash = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
     this.flash.setUsage(THREE.DynamicDrawUsage);
     solid.setAttribute('flash', this.flash);
-    this.solid = new THREE.InstancedMesh(solid, SOLID, cap);
+    this.solid = new THREE.InstancedMesh(solid, solidMaterial(front, piece.tint), cap);
     this.ink = shell ? new THREE.InstancedMesh(shell, INK, cap) : null;
     if (piece.tint) this.solid.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
     this.meshes = this.ink ? [this.solid, this.ink] : [this.solid];

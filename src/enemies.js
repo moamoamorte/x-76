@@ -40,8 +40,8 @@ export class EBullet {
 }
 
 // ---------------------------------------------------------------------------
-// Enemies are drawn in 3D; each subclass names its model in `static model`
-// (see models/enemies/index.js). One without a model, like the boss, draws itself.
+// Enemies are drawn in 3D; each subclass, the boss included, names its model
+// in `static model` (see models/enemies/index.js).
 export class Enemy {
   constructor(g, x, y) {
     this.g = g;

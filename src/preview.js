@@ -39,7 +39,7 @@ const models = { ship: createShip(), pod: createPod({ color: 'red' }) };
 const ENEMIES = Object.keys(SPECS);
 for (const k of ENEMIES) {
   models[k] = createEnemyModel(k);
-  models[k].group.scale.setScalar(1 / SHIP_SCALE);
+  models[k].group.scale.setScalar(models[k].scale / SHIP_SCALE);
 }
 for (const m of Object.values(models)) scene.add(m.group);
 let current = 'ship';

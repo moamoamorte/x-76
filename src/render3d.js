@@ -44,10 +44,11 @@ export class Render3D {
     this.setScale(view.s);
 
     // Two scenes drawn in turn, with the depth buffer cleared between them:
-    // terrain and enemies first, then the ship, pod and shield, which therefore
-    // never sink into a wall they graze. Enemies share the terrain's depth
-    // buffer, so a turret sits on its block and a larva crawling through a
-    // wall is hidden by it. Both scenes get the same lights.
+    // terrain and enemies first, then the ship, pod, shield and boss, which
+    // therefore never sink into a wall they graze. Enemies share the terrain's
+    // depth buffer, so a turret sits on its block and a larva crawling through
+    // a wall is hidden by it; the boss grows over the chamber's back wall, so
+    // it goes in front. Both scenes get the same lights.
     this.world = new THREE.Scene();
     this.scene = new THREE.Scene();
     this.world.add(...lights());
@@ -71,6 +72,7 @@ export class Render3D {
     this.scene.add(this.ship.group, this.pod.group, this.shield.group);
     this.enemies = createEnemyLayer();
     this.world.add(this.enemies.group);
+    this.scene.add(this.enemies.front);
     this.hideAll();
   }
 
@@ -113,6 +115,7 @@ export class Render3D {
     this.ship.group.visible = false;
     this.pod.group.visible = false;
     this.shield.group.visible = false;
+    this.enemies.front.visible = false;
   }
 
   // HUD spare-ship icon: the ship model rendered once, supersampled, then
@@ -126,7 +129,7 @@ export class Render3D {
 
     const SS = 8;
     const s = this.ship.group;
-    const vis = [s.visible, this.pod.group.visible, this.shield.group.visible];
+    const vis = [s.visible, this.pod.group.visible, this.shield.group.visible, this.enemies.front.visible];
     const pos = s.position.clone(), rot = s.rotation.clone(), scl = s.scale.clone();
     const bank = this.ship.bank;
     const bankRot = bank.rotation.clone(), bankPos = bank.position.clone();
@@ -166,7 +169,7 @@ export class Render3D {
     }
     this.icon = { key, canvas: src };
 
-    [s.visible, this.pod.group.visible, this.shield.group.visible] = vis;
+    [s.visible, this.pod.group.visible, this.shield.group.visible, this.enemies.front.visible] = vis;
     s.position.copy(pos); s.rotation.copy(rot); s.scale.copy(scl);
     bank.rotation.copy(bankRot); bank.position.copy(bankPos);
     for (const [o, v] of flames) o.visible = v;
@@ -190,7 +193,7 @@ export class Render3D {
       throttle: 1,
     });
     if (this.terrain) this.terrain.group.visible = this.backdrop.group.visible = false;
-    this.enemies.group.visible = false;
+    this.enemies.visible = false;
     this.aimCamera(0, 0);
     this.draw();
   }
@@ -204,7 +207,7 @@ export class Render3D {
     this.terrain.group.visible = this.backdrop.group.visible = true;
     this.terrain.update(camD, W);
     this.backdrop.update(camD, W);
-    this.enemies.group.visible = true;
+    this.enemies.visible = true;
     this.enemies.update(game.enemies, camD);
     this.aimCamera(-shake.x, shake.y);
 
