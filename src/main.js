@@ -658,7 +658,6 @@ class Game {
     ctx.rect(0, 0, W, H);
     ctx.clip();
     ctx.translate(shake.x, shake.y);
-    this.boss?.draw(ctx, camD);   // every other enemy is drawn by the 3D layer
     for (let i = 0; i < this.items.length; i++) this.items[i].draw(ctx, camD);
     for (let i = 0; i < this.pbullets.length; i++) this.pbullets[i].draw(ctx, camD);
     for (let i = 0; i < this.bits.length; i++) this.bits[i].draw(ctx, camD);
